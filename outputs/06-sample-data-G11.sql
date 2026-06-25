@@ -1,189 +1,206 @@
--- =============================================================
--- CS486 Campus Space Management System
--- Sample Data Preparation
--- Insert order respects foreign key dependencies
--- =============================================================
+-- ============================================================
+-- Campus Space Management System - Sample Data
+-- Group: G11
+-- DBMS: Microsoft SQL Server
+-- ============================================================
+-- Insertion order:
+--   1. [user]
+--   2. space
+--   3. facility_catalog
+--   4. facility_asset  (BEFORE space_facility — trigger constraint)
+--   5. space_facility
+--   6. booking
+--   7. booking_approval
+--   8. booking_session
+--   9. maintenance_record
+-- ============================================================
 
--- =============================================================
--- USERS (8 users)
--- =============================================================
-INSERT INTO [user] (full_name, email, phone_number, [role], department, account_status) VALUES
-(N'Alice Johnson',    N'alice.johnson@university.edu', N'0901000001', N'student',                 N'School of Computer Science',      N'active'),
-(N'Bob Smith',        N'bob.smith@university.edu',     N'0901000002', N'lecturer',                N'School of Computer Science',      N'active'),
-(N'Carol White',      N'carol.white@university.edu',  N'0901000003', N'teaching_assistant',      N'School of Computer Science',      N'active'),
-(N'David Brown',      N'david.brown@university.edu',  N'0901000004', N'facility_staff',          N'School of Computer Science',      N'active'),
-(N'Eve Davis',        N'eve.davis@university.edu',    N'0901000005', N'facility_manager',        N'School of Computer Science',      N'active'),
-(N'Frank Wilson',     N'frank.wilson@university.edu', N'0901000006', N'department_administrator', N'School of Computer Science',      N'active'),
-(N'Grace Lee',        N'grace.lee@university.edu',    N'0901000007', N'student',                 N'School of Computer Science',      N'active'),
-(N'Henry Taylor',     N'henry.taylor@university.edu', N'0901000008', N'lecturer',                N'Department of Mathematics',       N'active');
+USE [CampusSpaceManagement];
+GO
 
--- =============================================================
--- SPACES (10 spaces)
--- =============================================================
-INSERT INTO space (space_code, space_name, space_type, building, floor, room_number, capacity, current_status, usage_policy) VALUES
-(N'A101', N'Auditorium A101',   N'auditorium',       N'Building A', 1, N'101', 200, N'available',         N'No food or drinks. Must vacate by 22:00.'),
-(N'A102', N'Classroom A102',    N'classroom',        N'Building A', 1, N'102', 50,  N'available',         N'Standard classroom policy.'),
-(N'B201', N'Computer Lab B201', N'computer_lab',     N'Building B', 2, N'201', 40,  N'available',         N'Login required. No software installation.'),
-(N'B202', N'Project Lab B202',  N'project_lab',      N'Building B', 2, N'202', 20,  N'available',         N'Authorized students only.'),
-(N'C301', N'Meeting Room C301', N'meeting_room',     N'Building C', 3, N'301', 12,  N'available',         N'Max 2-hour booking.'),
-(N'C302', N'Student Workspace', N'student_workspace',N'Building C', 3, N'302', 30,  N'available',         N'First-come first-served.'),
-(N'A103', N'Classroom A103',    N'classroom',        N'Building A', 1, N'103', 35,  N'under_maintenance', N'Under renovation.'),
-(N'B203', N'Computer Lab B203', N'computer_lab',     N'Building B', 2, N'203', 30,  N'temporarily_closed',N'Closed for equipment upgrade.'),
-(N'C303', N'Meeting Room C303', N'meeting_room',     N'Building C', 3, N'303', 8,   N'available',         N'Small meeting room.'),
-(N'D401', N'Auditorium D401',   N'auditorium',       N'Building D', 4, N'401', 150, N'retired',           N'Permanently decommissioned.');
+-- ============================================================
+-- 1. user
+-- ============================================================
+SET IDENTITY_INSERT dbo.[user] ON;
 
--- =============================================================
--- FACILITIES (8 types)
--- =============================================================
-INSERT INTO facility (facility_name, [description]) VALUES
-(N'Projector',              N'HD projector with HDMI and VGA input'),
-(N'Whiteboard',             N'Standard whiteboard with markers'),
-(N'Microphone',             N'Wireless microphone system'),
-(N'Computer',               N'Desktop computer with monitor'),
-(N'Livestreaming Equipment',N'Camera and streaming setup'),
-(N'Air Conditioner',        N'Split-type air conditioning unit'),
-(N'Speaker System',         N'Surround sound speaker system'),
-(N'WiFi Router',            N'High-speed wireless access point');
+INSERT INTO dbo.[user] (user_id, full_name, email, phone, role, department, account_status)
+VALUES
+    (1, N'Nguyễn Văn An',    'an.nguyen@university.edu.vn',  '0901111111', 'Student',        N'Computer Science',      'Active'),
+    (2, N'Trần Thị Bình',     'binh.tran@university.edu.vn',  '0902222222', 'Lecturer',       N'Computer Science',      'Active'),
+    (3, N'Lê Hoàng Cường',    'cuong.le@university.edu.vn',   '0903333333', 'TA',             N'Computer Science',      'Active'),
+    (4, N'Phạm Minh Đức',     'duc.pham@university.edu.vn',   '0904444444', 'FacilityStaff',  N'Facilities',            'Active'),
+    (5, N'Hoàng Thị Em',      'em.hoang@university.edu.vn',   '0905555555', 'DeptAdmin',      N'Computer Science',      'Active'),
+    (6, N'Võ Văn Phương',     'phuong.vo@university.edu.vn',  '0906666666', 'FacilityManager',N'Facilities',            'Active');
 
--- =============================================================
--- SPACE_FACILITY (associate spaces with facilities)
--- =============================================================
-INSERT INTO space_facility (space_code, facility_id) VALUES
-(N'A101', 1), (N'A101', 2), (N'A101', 3), (N'A101', 5), (N'A101', 6), (N'A101', 7), (N'A101', 8),
-(N'A102', 1), (N'A102', 2), (N'A102', 6), (N'A102', 8),
-(N'B201', 1), (N'B201', 2), (N'B201', 4), (N'B201', 6), (N'B201', 8),
-(N'B202', 2), (N'B202', 4), (N'B202', 6),
-(N'C301', 1), (N'C301', 2), (N'C301', 6), (N'C301', 8),
-(N'C302', 2), (N'C302', 6), (N'C302', 8),
-(N'C303', 2), (N'C303', 6),
-(N'A103', 1), (N'A103', 2), (N'A103', 6),
-(N'B203', 1), (N'B203', 4), (N'B203', 6),
-(N'D401', 1), (N'D401', 6), (N'D401', 7);
+SET IDENTITY_INSERT dbo.[user] OFF;
+GO
 
--- =============================================================
--- BOOKING_REQUESTS (12 requests covering different scenarios)
--- =============================================================
+-- ============================================================
+-- 2. space
+-- ============================================================
+INSERT INTO dbo.space (space_code, space_name, space_type, building, floor, room_number, capacity, status, usage_policy)
+VALUES
+    ('AUD-101', N'Auditorium A101', 'Auditorium', N'Building A', 1, '101', 200, 'Available',
+     N'Available for lectures, seminars, and examinations. Capacity: 200.'),
+    ('CR-202',  N'Classroom C202',  'Classroom',  N'Building C', 2, '202', 50,  'Available',
+     N'Standard classroom for teaching and tutorials. Capacity: 50.'),
+    ('CL-301',  N'Computer Lab 301','ComputerLab',N'Building C', 3, '301', 40,  'Available',
+     N'Computer laboratory with workstations. For programming and IT classes. Capacity: 40.'),
+    ('MR-101',  N'Meeting Room M101','MeetingRoom',N'Building A',1, '101', 12, 'Available',
+     N'Small meeting room for group discussions and meetings. Capacity: 12.'),
+    ('PL-001',  N'Project Lab 001', 'ProjectLab', N'Building B', 1, '001', 20, 'Available',
+     N'Project laboratory for student projects and research. Capacity: 20.');
+GO
 
--- 1. Approved and completed booking (Bob lecture in A101)
-INSERT INTO booking_request (requester_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, [status], submitted_at) VALUES
-(2, N'A101', '2026-06-20 08:00:00', '2026-06-20 10:00:00', N'lecture', 150, N'completed', '2026-06-17 09:00:00');
+-- ============================================================
+-- 3. facility_catalog
+-- ============================================================
+SET IDENTITY_INSERT dbo.facility_catalog ON;
 
--- 2. Approved and checked-in booking (Alice student activity in B202)
-INSERT INTO booking_request (requester_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, [status], submitted_at) VALUES
-(1, N'B202', '2026-06-21 14:00:00', '2026-06-21 17:00:00', N'student_activity', 15, N'checked_in', '2026-06-18 10:30:00');
+INSERT INTO dbo.facility_catalog (catalog_id, name, description, is_trackable)
+VALUES
+    (1, N'Projector',          N'HD multimedia projector',          1),
+    (2, N'Whiteboard',         N'Whiteboard with markers',          0),
+    (3, N'Air Conditioner',    N'Split-type air conditioning unit', 0),
+    (4, N'Computer',           N'Desktop workstation',              1),
+    (5, N'Microphone',         N'Wireless microphone system',       0),
+    (6, N'Livestream Equipment',N'Camera and streaming setup',      1);
 
--- 3. Approved pending check-in (Carol seminar in C301)
-INSERT INTO booking_request (requester_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, [status], submitted_at) VALUES
-(3, N'C301', '2026-06-22 09:00:00', '2026-06-22 11:00:00', N'seminar', 10, N'approved', '2026-06-19 14:00:00');
+SET IDENTITY_INSERT dbo.facility_catalog OFF;
+GO
 
--- 4. Pending approval (Henry meeting in C303)
-INSERT INTO booking_request (requester_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, [status], submitted_at) VALUES
-(8, N'C303', '2026-06-23 15:00:00', '2026-06-23 16:00:00', N'meeting', 6, N'pending', '2026-06-20 08:00:00');
+-- ============================================================
+-- 4. facility_asset  (BEFORE space_facility — trigger constraint)
+-- ============================================================
+SET IDENTITY_INSERT dbo.facility_asset ON;
 
--- 5. Rejected booking (Grace requesting A103 but it is under maintenance)
-INSERT INTO booking_request (requester_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, [status], submitted_at) VALUES
-(7, N'A103', '2026-06-24 10:00:00', '2026-06-24 12:00:00', N'examination', 30, N'rejected', '2026-06-18 11:00:00');
+INSERT INTO dbo.facility_asset (asset_id, catalog_id, space_code, asset_tag, status)
+VALUES
+    -- Projectors (catalog_id = 1): 3 units
+    (1, 1, 'AUD-101', 'PROJ-001', 'Working'),
+    (2, 1, 'CR-202',  'PROJ-002', 'Working'),
+    (3, 1, 'CL-301',  'PROJ-003', 'Working'),
+    -- Computers (catalog_id = 4): 3 units in CL-301
+    (4, 4, 'CL-301',  'COMP-001', 'Working'),
+    (5, 4, 'CL-301',  'COMP-002', 'Working'),
+    (6, 4, 'CL-301',  'COMP-003', 'Working'),
+    -- Livestream Equipment (catalog_id = 6): 1 unit in AUD-101
+    (7, 6, 'AUD-101', 'LIVE-001', 'Working');
 
--- 6. Rejected booking (Alice requesting B203 but it is temporarily closed)
-INSERT INTO booking_request (requester_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, [status], submitted_at) VALUES
-(1, N'B203', '2026-06-25 09:00:00', '2026-06-25 12:00:00', N'workshop', 25, N'rejected', '2026-06-19 09:00:00');
+SET IDENTITY_INSERT dbo.facility_asset OFF;
+GO
 
--- 7. Cancelled booking (Frank cancelled his own request)
-INSERT INTO booking_request (requester_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, [status], submitted_at) VALUES
-(6, N'C301', '2026-06-26 13:00:00', '2026-06-26 15:00:00', N'administrative_event', 10, N'cancelled', '2026-06-18 16:00:00');
+-- ============================================================
+-- 5. space_facility
+--   Quantities for trackable items must match facility_asset counts.
+-- ============================================================
+SET IDENTITY_INSERT dbo.space_facility ON;
 
--- 8. No-show booking (Grace never showed up)
-INSERT INTO booking_request (requester_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, [status], submitted_at) VALUES
-(7, N'C302', '2026-06-19 08:00:00', '2026-06-19 10:00:00', N'student_activity', 5, N'no_show', '2026-06-15 12:00:00');
+INSERT INTO dbo.space_facility (id, space_code, catalog_id, quantity)
+VALUES
+    -- AUD-101: Projector(qty=1), Whiteboard(qty=2), AC(qty=4), Microphone(qty=2), Livestream(qty=1)
+    (1,  'AUD-101', 1, 1),
+    (2,  'AUD-101', 2, 2),
+    (3,  'AUD-101', 3, 4),
+    (4,  'AUD-101', 5, 2),
+    (5,  'AUD-101', 6, 1),
+    -- CR-202: Projector(qty=1), Whiteboard(qty=1), AC(qty=2)
+    (6,  'CR-202', 1, 1),
+    (7,  'CR-202', 2, 1),
+    (8,  'CR-202', 3, 2),
+    -- CL-301: Projector(qty=1), Computer(qty=3), Whiteboard(qty=1), AC(qty=2)
+    (9,  'CL-301', 1, 1),
+    (10, 'CL-301', 4, 3),
+    (11, 'CL-301', 2, 1),
+    (12, 'CL-301', 3, 2),
+    -- MR-101: Whiteboard(qty=1), AC(qty=1)
+    (13, 'MR-101', 2, 1),
+    (14, 'MR-101', 3, 1),
+    -- PL-001: Whiteboard(qty=1), AC(qty=1)
+    (15, 'PL-001', 2, 1),
+    (16, 'PL-001', 3, 1);
 
--- 9. Approved but future booking (Bob workshop in B201)
-INSERT INTO booking_request (requester_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, [status], submitted_at) VALUES
-(2, N'B201', '2026-07-01 08:00:00', '2026-07-01 12:00:00', N'workshop', 35, N'approved', '2026-06-20 10:00:00');
+SET IDENTITY_INSERT dbo.space_facility OFF;
+GO
 
--- 10. Pending for a space that currently has no conflict (Carol examination in A102)
-INSERT INTO booking_request (requester_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, [status], submitted_at) VALUES
-(3, N'A102', '2026-07-02 09:00:00', '2026-07-02 11:00:00', N'examination', 40, N'pending', '2026-06-21 08:00:00');
+-- ============================================================
+-- 6. booking
+-- ============================================================
+SET IDENTITY_INSERT dbo.booking ON;
 
--- 11. Approved and completed older booking (Bob lecture in A102 — history record)
-INSERT INTO booking_request (requester_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, [status], submitted_at) VALUES
-(2, N'A102', '2026-06-10 08:00:00', '2026-06-10 10:00:00', N'lecture', 45, N'completed', '2026-06-07 09:00:00');
+INSERT INTO dbo.booking (booking_id, space_code, requester_id, requested_start, requested_end, purpose, participants, booking_type, status)
+VALUES
+    -- 1. Pending booking — Student for Meeting Room
+    (1, 'MR-101', 1, '2026-07-01 09:00:00', '2026-07-01 11:00:00', N'Group project discussion', 6, 'Meeting', 'Pending'),
+    -- 2. Approved booking — Lecturer for Auditorium
+    (2, 'AUD-101', 2, '2026-06-28 08:00:00', '2026-06-28 10:00:00', N'Database systems guest lecture', 150, 'Lecture', 'Approved'),
+    -- 3. Approved booking — TA for Classroom
+    (3, 'CR-202', 3, '2026-06-29 13:30:00', '2026-06-29 15:30:00', N'Tutorial session', 40, 'Seminar', 'Approved'),
+    -- 4. Rejected booking — Student for Computer Lab
+    (4, 'CL-301', 1, '2026-06-30 14:00:00', '2026-06-30 17:00:00', N'Personal project work', 5, 'StudentActivity', 'Rejected'),
+    -- 5. Checked-in booking — Lecturer for Auditorium (past, in progress)
+    (5, 'AUD-101', 2, '2026-06-25 09:00:00', '2026-06-25 12:00:00', N'AI seminar', 120, 'Seminar', 'CheckedIn'),
+    -- 6. Completed booking — Lecturer for Computer Lab
+    (6, 'CL-301', 2, '2026-06-20 08:00:00', '2026-06-20 12:00:00', N'Python workshop', 35, 'Workshop', 'Completed'),
+    -- 7. No-show booking — Student for Meeting Room
+    (7, 'MR-101', 1, '2026-06-22 10:00:00', '2026-06-22 12:00:00', N'Study group meeting', 8, 'Meeting', 'NoShow'),
+    -- 8. Cancelled booking — Student for Project Lab
+    (8, 'PL-001', 1, '2026-07-05 13:00:00', '2026-07-05 17:00:00', N'Robot project work', 10, 'StudentActivity', 'Cancelled');
 
--- 12. Alice booking an already-retired space D401 (should be rejected at application level)
-INSERT INTO booking_request (requester_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, [status], submitted_at) VALUES
-(1, N'D401', '2026-07-03 10:00:00', '2026-07-03 12:00:00', N'lecture', 100, N'rejected', '2026-06-21 09:00:00');
+SET IDENTITY_INSERT dbo.booking OFF;
+GO
 
--- =============================================================
--- BOOKING_APPROVALS
--- =============================================================
+-- ============================================================
+-- 7. booking_approval
+-- ============================================================
+SET IDENTITY_INSERT dbo.booking_approval ON;
 
--- 1. Bob's lecture in A101 — approved by Eve (facility manager)
-INSERT INTO booking_approval (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason) VALUES
-(1, 5, N'approved', '2026-06-17 14:00:00', N'Approved. Standard lecture slot.', NULL);
+INSERT INTO dbo.booking_approval (approval_id, booking_id, approver_id, decision_time, decision_note, rejection_reason)
+VALUES
+    (1, 2, 4, '2026-06-26 10:00:00', N'Approved. Auditorium A101 is available.', NULL),
+    (2, 3, 4, '2026-06-27 09:30:00', N'Approved. Classroom C202 is free during that time.', NULL),
+    (3, 4, 4, '2026-06-28 08:00:00', N'Rejected.', N'Computer Lab 301 is reserved for a scheduled examination on that date.');
 
--- 2. Alice's student activity in B202 — approved by David (facility staff)
-INSERT INTO booking_approval (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason) VALUES
-(2, 4, N'approved', '2026-06-18 15:00:00', N'Approved for student project work.', NULL);
+SET IDENTITY_INSERT dbo.booking_approval OFF;
+GO
 
--- 3. Carol's seminar in C301 — approved by Eve
-INSERT INTO booking_approval (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason) VALUES
-(3, 5, N'approved', '2026-06-19 16:00:00', N'Seminar approved.', NULL);
+-- ============================================================
+-- 8. booking_session
+-- ============================================================
+SET IDENTITY_INSERT dbo.booking_session ON;
 
--- 5. Grace's exam in A103 — rejected by Eve (under maintenance)
-INSERT INTO booking_approval (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason) VALUES
-(5, 5, N'rejected', '2026-06-18 14:00:00', N'Space is not available.', N'Room A103 is currently under maintenance. Please choose another room.');
+INSERT INTO dbo.booking_session (session_id, booking_id, actual_start, checked_in_by, initial_condition, actual_end, completed_by, final_condition, usage_notes)
+VALUES
+    -- Checked-in (not yet completed)
+    (1, 5, '2026-06-25 09:05:00', 4, N'Space clean, projector working, seating arranged.',
+     NULL, NULL, NULL, NULL),
+    -- Completed session
+    (2, 6, '2026-06-20 08:10:00', 4, N'All computers functional, room clean.',
+     '2026-06-20 12:15:00', 4, N'Room tidy, all computers shut down properly.',
+     N'Workshop finished on time. One participant reported slow network, otherwise satisfactory.');
 
--- 6. Alice's workshop in B203 — rejected by David (temporarily closed)
-INSERT INTO booking_approval (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason) VALUES
-(6, 4, N'rejected', '2026-06-19 14:00:00', N'Room is temporarily closed.', N'B203 is closed for equipment upgrade. Expected reopening in July.');
+SET IDENTITY_INSERT dbo.booking_session OFF;
+GO
 
--- 9. Bob's workshop in B201 — approved by Eve
-INSERT INTO booking_approval (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason) VALUES
-(9, 5, N'approved', '2026-06-20 15:00:00', N'Approved for workshop.', NULL);
+-- ============================================================
+-- 9. maintenance_record
+-- ============================================================
+SET IDENTITY_INSERT dbo.maintenance_record ON;
 
--- 11. Bob's old lecture in A102 — approved by David
-INSERT INTO booking_approval (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason) VALUES
-(11, 4, N'approved', '2026-06-07 14:00:00', N'Approved.', NULL);
+INSERT INTO dbo.maintenance_record (maintenance_id, space_code, reporter_id, assigned_to, problem_description, problem_type, start_time, completion_time, status, result_note)
+VALUES
+    -- Active maintenance — projector broken
+    (1, 'AUD-101', 3, 4, N'Projector displays flickering image and turns off after 10 minutes.', 'BrokenProjector',
+     '2026-06-24 14:00:00', NULL, 'InProgress', NULL),
+    -- Active maintenance — AC failure in computer lab
+    (2, 'CL-301', 2, 4, N'Air conditioner not cooling. Room temperature exceeds 35°C.', 'ACFailure',
+     '2026-06-25 09:00:00', NULL, 'Reported', NULL),
+    -- Completed maintenance — cleaning
+    (3, 'MR-101', 5, 4, N'Meeting room floor and whiteboard need cleaning.', 'Cleaning',
+     '2026-06-21 08:00:00', '2026-06-21 10:30:00', 'Completed', N'Room cleaned, whiteboard erased, trash removed.');
 
--- 12. Alice's request for retired D401 — rejected by Eve
-INSERT INTO booking_approval (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason) VALUES
-(12, 5, N'rejected', '2026-06-21 11:00:00', N'Space permanently decommissioned.', N'Room D401 has been retired and cannot be booked.');
+SET IDENTITY_INSERT dbo.maintenance_record OFF;
+GO
 
--- =============================================================
--- BOOKING_SESSIONS
--- =============================================================
-
--- 1. Bob's A101 lecture — completed
-INSERT INTO booking_session (booking_id, actual_start_time, checkin_by, initial_condition, actual_end_time, completed_by, final_condition, usage_notes) VALUES
-(1, '2026-06-20 08:05:00', 4, N'Clean, all equipment functioning.', '2026-06-20 10:10:00', 4, N'Clean, projector turned off.', N'Lecture went smoothly. 148 attendees.');
-
--- 2. Alice's B202 activity — checked in, not yet checked out
-INSERT INTO booking_session (booking_id, actual_start_time, checkin_by, initial_condition, actual_end_time, completed_by, final_condition, usage_notes) VALUES
-(2, '2026-06-21 14:10:00', 4, N'Lab clean, computers on.', NULL, NULL, NULL, NULL);
-
--- 11. Bob's old A102 lecture — completed (historical)
-INSERT INTO booking_session (booking_id, actual_start_time, checkin_by, initial_condition, actual_end_time, completed_by, final_condition, usage_notes) VALUES
-(11, '2026-06-10 08:00:00', 4, N'Room tidy, whiteboard clean.', '2026-06-10 10:05:00', 4, N'Whiteboard used, otherwise fine.', N'Standard lecture. 42 students.');
-
--- =============================================================
--- MAINTENANCE_RECORDS
--- =============================================================
-
--- A103 is under maintenance — broken projector
-INSERT INTO maintenance_record (space_code, reporter_id, assigned_staff_id, problem_description, problem_type, start_time, completion_time, [status], result_note) VALUES
-(N'A103', 2, 4, N'Projector lamp burnt out and image is distorted.', N'broken_projector', '2026-06-14 10:00:00', NULL, N'in_progress', N'Ordered replacement lamp. Estimated arrival next week.');
-
--- B203 is temporarily closed — network upgrade
-INSERT INTO maintenance_record (space_code, reporter_id, assigned_staff_id, problem_description, problem_type, start_time, completion_time, [status], result_note) VALUES
-(N'B203', 5, 4, N'Network infrastructure upgrade for all computer lab machines.', N'network_problem', '2026-06-10 08:00:00', NULL, N'in_progress', N'Upgrade in progress. All 30 machines being reimaged.');
-
--- A101 AC failure (historical — now completed)
-INSERT INTO maintenance_record (space_code, reporter_id, assigned_staff_id, problem_description, problem_type, start_time, completion_time, [status], result_note) VALUES
-(N'A101', 1, 4, N'Air conditioner not cooling. Temperature above 30°C.', N'ac_failure', '2026-06-01 09:00:00', '2026-06-03 16:00:00', N'completed', N'AC repaired. Compressor replaced and gas refilled.');
-
--- C302 damaged furniture
-INSERT INTO maintenance_record (space_code, reporter_id, assigned_staff_id, problem_description, problem_type, start_time, completion_time, [status], result_note) VALUES
-(N'C302', 7, NULL, N'Three chairs broken and one table has a cracked surface.', N'damaged_furniture', '2026-06-18 14:00:00', NULL, N'reported', N'Awaiting inspection.');
-
--- C303 — cleaning issue
-INSERT INTO maintenance_record (space_code, reporter_id, assigned_staff_id, problem_description, problem_type, start_time, completion_time, [status], result_note) VALUES
-(N'C303', 3, 4, N'Room has unpleasant odor and trash not removed.', N'cleaning_issue', '2026-06-16 11:00:00', '2026-06-16 15:00:00', N'completed', N'Room cleaned and sanitized.');
+PRINT 'Sample data inserted successfully.';
+GO
