@@ -1,19 +1,19 @@
 -- ============================================================
--- Campus Space Management System - Database Definition (DDL)
--- Group: G11
+-- Database Definition DDL — G11
 -- DBMS: Microsoft SQL Server
+-- Database: CampusSpaceManagement
 -- ============================================================
 
 -- ============================================================
--- SECTION 1: Database Initialization & Drop Existing
+-- 1. Database Initialization
 -- ============================================================
-
 USE master;
 GO
 
 IF DB_ID('CampusSpaceManagement') IS NOT NULL
 BEGIN
-    ALTER DATABASE [CampusSpaceManagement] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    ALTER DATABASE [CampusSpaceManagement]
+    SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
     DROP DATABASE [CampusSpaceManagement];
 END
 GO
@@ -25,39 +25,39 @@ USE [CampusSpaceManagement];
 GO
 
 -- ============================================================
--- SECTION 2: Drop Existing Tables (Reverse FK Dependency Order)
+-- 2. Drop existing tables (reverse FK dependency order)
 -- ============================================================
-
+IF OBJECT_ID('dbo.booking_session', 'U') IS NOT NULL DROP TABLE dbo.booking_session;
+IF OBJECT_ID('dbo.booking_decision', 'U') IS NOT NULL DROP TABLE dbo.booking_decision;
+IF OBJECT_ID('dbo.booking_request', 'U') IS NOT NULL DROP TABLE dbo.booking_request;
 IF OBJECT_ID('dbo.facility_asset', 'U') IS NOT NULL DROP TABLE dbo.facility_asset;
 IF OBJECT_ID('dbo.space_facility', 'U') IS NOT NULL DROP TABLE dbo.space_facility;
-IF OBJECT_ID('dbo.facility_catalog', 'U') IS NOT NULL DROP TABLE dbo.facility_catalog;
-IF OBJECT_ID('dbo.booking_session', 'U') IS NOT NULL DROP TABLE dbo.booking_session;
-IF OBJECT_ID('dbo.booking_approval', 'U') IS NOT NULL DROP TABLE dbo.booking_approval;
 IF OBJECT_ID('dbo.maintenance_record', 'U') IS NOT NULL DROP TABLE dbo.maintenance_record;
-IF OBJECT_ID('dbo.booking', 'U') IS NOT NULL DROP TABLE dbo.booking;
+IF OBJECT_ID('dbo.facility_catalog', 'U') IS NOT NULL DROP TABLE dbo.facility_catalog;
 IF OBJECT_ID('dbo.space', 'U') IS NOT NULL DROP TABLE dbo.space;
 IF OBJECT_ID('dbo.[user]', 'U') IS NOT NULL DROP TABLE dbo.[user];
 GO
 
 -- ============================================================
--- SECTION 3: Table Definitions
+-- 3. Table Definitions
 -- ============================================================
 
--- 3.1  user
+-- 3.1 user
 CREATE TABLE dbo.[user]
 (
     user_id         INT           NOT NULL IDENTITY(1,1),
     full_name       NVARCHAR(100) NOT NULL,
     email           NVARCHAR(255) NOT NULL,
-    phone           NVARCHAR(20)  NULL,
-    role            NVARCHAR(20)  NOT NULL,
-    department      NVARCHAR(100) NULL,
+    phone_number    NVARCHAR(20)  NULL,
+    role            NVARCHAR(30)  NOT NULL,
+    department      NVARCHAR(100) NOT NULL,
     account_status  NVARCHAR(20)  NOT NULL DEFAULT 'Active',
 
     CONSTRAINT PK_user PRIMARY KEY (user_id),
     CONSTRAINT UQ_user_email UNIQUE (email),
     CONSTRAINT CK_user_role CHECK (role IN (
-        'Student', 'Lecturer', 'TA', 'FacilityStaff', 'DeptAdmin', 'FacilityManager'
+        'Student', 'Lecturer', 'TA',
+        'Facility Staff', 'Dept Admin', 'Facility Manager'
     )),
     CONSTRAINT CK_user_account_status CHECK (account_status IN (
         'Active', 'Inactive', 'Suspended'
@@ -65,270 +65,214 @@ CREATE TABLE dbo.[user]
 );
 GO
 
--- 3.2  space
+-- 3.2 space
 CREATE TABLE dbo.space
 (
-    space_code    NVARCHAR(20)  NOT NULL,
-    space_name    NVARCHAR(100) NOT NULL,
-    space_type    NVARCHAR(30)  NOT NULL,
-    building      NVARCHAR(100) NOT NULL,
-    floor         INT           NOT NULL,
-    room_number   NVARCHAR(20)  NOT NULL,
-    capacity      INT           NOT NULL,
-    status        NVARCHAR(30)  NOT NULL DEFAULT 'Available',
-    usage_policy  NVARCHAR(MAX) NULL,
+    space_code      NVARCHAR(20)  NOT NULL,
+    space_name      NVARCHAR(100) NOT NULL,
+    space_type      NVARCHAR(30)  NOT NULL,
+    building        NVARCHAR(100) NOT NULL,
+    floor           INT           NOT NULL,
+    room_number     NVARCHAR(20)  NOT NULL,
+    capacity        INT           NOT NULL,
+    current_status  NVARCHAR(30)  NOT NULL DEFAULT 'Available',
+    usage_policy    NVARCHAR(MAX) NULL,
 
     CONSTRAINT PK_space PRIMARY KEY (space_code),
-    CONSTRAINT CK_space_capacity CHECK (capacity > 0),
+    CONSTRAINT UQ_space_room UNIQUE (building, floor, room_number),
     CONSTRAINT CK_space_type CHECK (space_type IN (
-        'Auditorium', 'Classroom', 'ComputerLab', 'ProjectLab', 'MeetingRoom', 'Workspace'
+        'Auditorium', 'Classroom', 'Computer Laboratory',
+        'Project Laboratory', 'Meeting Room', 'Student Workspace'
     )),
-    CONSTRAINT CK_space_status CHECK (status IN (
-        'Available', 'InUse', 'UnderMaintenance', 'TemporarilyClosed', 'Retired'
+    CONSTRAINT CK_space_floor CHECK (floor >= 0),
+    CONSTRAINT CK_space_capacity CHECK (capacity > 0),
+    CONSTRAINT CK_space_current_status CHECK (current_status IN (
+        'Available', 'In Use', 'Under Maintenance',
+        'Temporarily Closed', 'Retired'
     ))
 );
 GO
 
--- 3.3  facility_catalog
+-- 3.3 facility_catalog
 CREATE TABLE dbo.facility_catalog
 (
-    catalog_id   INT           NOT NULL IDENTITY(1,1),
-    name         NVARCHAR(100) NOT NULL,
-    description  NVARCHAR(MAX) NULL,
-    is_trackable BIT           NOT NULL DEFAULT 0,
+    catalog_id   INT            NOT NULL IDENTITY(1,1),
+    name         NVARCHAR(100)  NOT NULL,
+    description  NVARCHAR(500)  NULL,
+    is_trackable BIT            NOT NULL DEFAULT 0,
 
-    CONSTRAINT PK_facility_catalog PRIMARY KEY (catalog_id)
+    CONSTRAINT PK_facility_catalog PRIMARY KEY (catalog_id),
+    CONSTRAINT UQ_facility_catalog_name UNIQUE (name)
 );
 GO
 
--- 3.4  space_facility
+-- 3.4 space_facility (M:N associative)
 CREATE TABLE dbo.space_facility
 (
-    id          INT          NOT NULL IDENTITY(1,1),
     space_code  NVARCHAR(20) NOT NULL,
     catalog_id  INT          NOT NULL,
-    quantity    INT          NOT NULL DEFAULT 1,
+    quantity    INT          NOT NULL,
 
-    CONSTRAINT PK_space_facility PRIMARY KEY (id),
-    CONSTRAINT UQ_space_facility UNIQUE (space_code, catalog_id),
+    CONSTRAINT PK_space_facility PRIMARY KEY (space_code, catalog_id),
+    CONSTRAINT FK_space_facility_space
+        FOREIGN KEY (space_code) REFERENCES dbo.space(space_code)
+        ON UPDATE CASCADE ON DELETE NO ACTION,
+    CONSTRAINT FK_space_facility_catalog
+        FOREIGN KEY (catalog_id) REFERENCES dbo.facility_catalog(catalog_id)
+        ON UPDATE NO ACTION ON DELETE NO ACTION,
     CONSTRAINT CK_space_facility_quantity CHECK (quantity > 0)
 );
 GO
 
--- 3.5  facility_asset
+-- 3.5 facility_asset
 CREATE TABLE dbo.facility_asset
 (
-    asset_id    INT          NOT NULL IDENTITY(1,1),
-    catalog_id  INT          NOT NULL,
-    space_code  NVARCHAR(20) NOT NULL,
-    asset_tag   NVARCHAR(50) NOT NULL,
-    status      NVARCHAR(20) NOT NULL DEFAULT 'Working',
+    asset_id    INT           NOT NULL IDENTITY(1,1),
+    asset_tag   NVARCHAR(50)  NOT NULL,
+    catalog_id  INT           NOT NULL,
+    space_code  NVARCHAR(20)  NOT NULL,
+    status      NVARCHAR(20)  NOT NULL DEFAULT 'Working',
 
     CONSTRAINT PK_facility_asset PRIMARY KEY (asset_id),
-    CONSTRAINT UQ_facility_asset_asset_tag UNIQUE (asset_tag),
+    CONSTRAINT UQ_facility_asset_tag UNIQUE (asset_tag),
+    CONSTRAINT FK_facility_asset_catalog
+        FOREIGN KEY (catalog_id) REFERENCES dbo.facility_catalog(catalog_id)
+        ON UPDATE NO ACTION ON DELETE NO ACTION,
+    CONSTRAINT FK_facility_asset_space
+        FOREIGN KEY (space_code) REFERENCES dbo.space(space_code)
+        ON UPDATE CASCADE ON DELETE NO ACTION,
     CONSTRAINT CK_facility_asset_status CHECK (status IN (
-        'Working', 'UnderRepair', 'Retired'
+        'Working', 'Under Repair', 'Retired'
     ))
 );
 GO
 
--- 3.6  booking
-CREATE TABLE dbo.booking
+-- 3.6 booking_request
+CREATE TABLE dbo.booking_request
 (
-    booking_id      INT           NOT NULL IDENTITY(1,1),
-    space_code      NVARCHAR(20)  NOT NULL,
-    requester_id    INT           NOT NULL,
-    requested_start DATETIME2     NOT NULL,
-    requested_end   DATETIME2     NOT NULL,
-    purpose         NVARCHAR(MAX) NULL,
-    participants    INT           NOT NULL,
-    booking_type    NVARCHAR(30)  NOT NULL,
-    status          NVARCHAR(20)  NOT NULL DEFAULT 'Pending',
+    booking_id              INT           NOT NULL IDENTITY(1,1),
+    requester_id            INT           NOT NULL,
+    space_code              NVARCHAR(20)  NOT NULL,
+    requested_start_time    DATETIME2     NOT NULL,
+    requested_end_time      DATETIME2     NOT NULL,
+    purpose                 NVARCHAR(30)  NOT NULL,
+    expected_participants   INT           NOT NULL,
+    status                  NVARCHAR(20)  NOT NULL DEFAULT 'Pending',
+    created_at              DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
 
-    CONSTRAINT PK_booking PRIMARY KEY (booking_id),
-    CONSTRAINT CK_booking_participants CHECK (participants > 0),
-    CONSTRAINT CK_booking_time_range CHECK (requested_end > requested_start),
-    CONSTRAINT CK_booking_type CHECK (booking_type IN (
+    CONSTRAINT PK_booking_request PRIMARY KEY (booking_id),
+    CONSTRAINT FK_booking_request_requester
+        FOREIGN KEY (requester_id) REFERENCES dbo.[user](user_id)
+        ON UPDATE NO ACTION ON DELETE NO ACTION,
+    CONSTRAINT FK_booking_request_space
+        FOREIGN KEY (space_code) REFERENCES dbo.space(space_code)
+        ON UPDATE CASCADE ON DELETE NO ACTION,
+    CONSTRAINT CK_booking_request_time CHECK (requested_end_time > requested_start_time),
+    CONSTRAINT CK_booking_request_purpose CHECK (purpose IN (
         'Lecture', 'Examination', 'Seminar', 'Workshop',
-        'Meeting', 'StudentActivity', 'Administrative'
+        'Meeting', 'Student Activity', 'Administrative Event'
     )),
-    CONSTRAINT CK_booking_status CHECK (status IN (
+    CONSTRAINT CK_booking_request_participants CHECK (expected_participants > 0),
+    CONSTRAINT CK_booking_request_status CHECK (status IN (
         'Pending', 'Approved', 'Rejected', 'Cancelled',
-        'CheckedIn', 'Completed', 'NoShow'
+        'Checked In', 'Completed', 'No-Show'
     ))
 );
 GO
 
--- 3.7  booking_approval
-CREATE TABLE dbo.booking_approval
+-- 3.7 booking_decision
+CREATE TABLE dbo.booking_decision
 (
-    approval_id     INT           NOT NULL IDENTITY(1,1),
-    booking_id      INT           NOT NULL,
-    approver_id     INT           NOT NULL,
-    decision_time   DATETIME2     NOT NULL,
-    decision_note   NVARCHAR(MAX) NULL,
-    rejection_reason NVARCHAR(MAX) NULL,
+    booking_id       INT            NOT NULL,
+    staff_id         INT            NOT NULL,
+    decision         NVARCHAR(10)   NOT NULL,
+    decision_time    DATETIME2      NOT NULL,
+    decision_note    NVARCHAR(500)  NULL,
+    rejection_reason NVARCHAR(500)  NULL,
 
-    CONSTRAINT PK_booking_approval PRIMARY KEY (approval_id),
-    CONSTRAINT UQ_booking_approval_booking UNIQUE (booking_id)
-);
-GO
-
--- 3.8  booking_session
-CREATE TABLE dbo.booking_session
-(
-    session_id      INT           NOT NULL IDENTITY(1,1),
-    booking_id      INT           NOT NULL,
-    actual_start    DATETIME2     NOT NULL,
-    checked_in_by   INT           NOT NULL,
-    initial_condition NVARCHAR(MAX) NULL,
-    actual_end      DATETIME2     NULL,
-    completed_by    INT           NULL,
-    final_condition NVARCHAR(MAX) NULL,
-    usage_notes     NVARCHAR(MAX) NULL,
-
-    CONSTRAINT PK_booking_session PRIMARY KEY (session_id),
-    CONSTRAINT UQ_booking_session_booking UNIQUE (booking_id),
-    CONSTRAINT CK_booking_session_time_range CHECK (
-        actual_end IS NULL OR actual_end > actual_start
+    CONSTRAINT PK_booking_decision PRIMARY KEY (booking_id),
+    CONSTRAINT FK_booking_decision_booking
+        FOREIGN KEY (booking_id) REFERENCES dbo.booking_request(booking_id)
+        ON UPDATE NO ACTION ON DELETE NO ACTION,
+    CONSTRAINT FK_booking_decision_staff
+        FOREIGN KEY (staff_id) REFERENCES dbo.[user](user_id)
+        ON UPDATE NO ACTION ON DELETE NO ACTION,
+    CONSTRAINT CK_booking_decision_decision CHECK (decision IN (
+        'Approved', 'Rejected'
+    )),
+    CONSTRAINT CK_booking_decision_rejection CHECK (
+        NOT (decision = 'Rejected' AND rejection_reason IS NULL)
     )
 );
 GO
 
--- 3.9  maintenance_record
+-- 3.8 booking_session
+CREATE TABLE dbo.booking_session
+(
+    booking_id         INT            NOT NULL,
+    actual_start_time  DATETIME2      NOT NULL,
+    checked_in_by      INT            NOT NULL,
+    initial_condition  NVARCHAR(500)  NULL,
+    actual_end_time    DATETIME2      NULL,
+    final_condition    NVARCHAR(500)  NULL,
+    usage_notes        NVARCHAR(MAX)  NULL,
+
+    CONSTRAINT PK_booking_session PRIMARY KEY (booking_id),
+    CONSTRAINT FK_booking_session_booking
+        FOREIGN KEY (booking_id) REFERENCES dbo.booking_request(booking_id)
+        ON UPDATE NO ACTION ON DELETE NO ACTION,
+    CONSTRAINT FK_booking_session_staff
+        FOREIGN KEY (checked_in_by) REFERENCES dbo.[user](user_id)
+        ON UPDATE NO ACTION ON DELETE NO ACTION,
+    CONSTRAINT CK_booking_session_time CHECK (
+        actual_end_time IS NULL OR actual_end_time > actual_start_time
+    )
+);
+GO
+
+-- 3.9 maintenance_record
 CREATE TABLE dbo.maintenance_record
 (
-    maintenance_id     INT           NOT NULL IDENTITY(1,1),
-    space_code         NVARCHAR(20)  NOT NULL,
-    reporter_id        INT           NOT NULL,
-    assigned_to        INT           NULL,
-    problem_description NVARCHAR(MAX) NOT NULL,
-    problem_type       NVARCHAR(30)  NOT NULL,
-    start_time         DATETIME2     NOT NULL,
-    completion_time    DATETIME2     NULL,
-    status             NVARCHAR(20)  NOT NULL DEFAULT 'Reported',
-    result_note        NVARCHAR(MAX) NULL,
+    maintenance_id      INT            NOT NULL IDENTITY(1,1),
+    space_code          NVARCHAR(20)   NOT NULL,
+    reported_by         INT            NOT NULL,
+    assigned_to         INT            NULL,
+    problem_description NVARCHAR(500)  NOT NULL,
+    problem_type        NVARCHAR(30)   NOT NULL,
+    start_time          DATETIME2      NOT NULL,
+    completion_time     DATETIME2      NULL,
+    status              NVARCHAR(20)   NOT NULL DEFAULT 'Reported',
+    result_note         NVARCHAR(MAX)  NULL,
 
     CONSTRAINT PK_maintenance_record PRIMARY KEY (maintenance_id),
+    CONSTRAINT FK_maintenance_space
+        FOREIGN KEY (space_code) REFERENCES dbo.space(space_code)
+        ON UPDATE CASCADE ON DELETE NO ACTION,
+    CONSTRAINT FK_maintenance_reporter
+        FOREIGN KEY (reported_by) REFERENCES dbo.[user](user_id)
+        ON UPDATE NO ACTION ON DELETE NO ACTION,
+    CONSTRAINT FK_maintenance_assignee
+        FOREIGN KEY (assigned_to) REFERENCES dbo.[user](user_id)
+        ON UPDATE NO ACTION ON DELETE NO ACTION,
     CONSTRAINT CK_maintenance_problem_type CHECK (problem_type IN (
-        'BrokenProjector', 'ACFailure', 'DamagedFurniture',
-        'Cleaning', 'Network', 'Other'
+        'Broken Projector', 'AC Failure', 'Damaged Furniture',
+        'Cleaning Issue', 'Network Problem'
     )),
     CONSTRAINT CK_maintenance_status CHECK (status IN (
-        'Reported', 'InProgress', 'Completed', 'Cancelled'
-    ))
+        'Reported', 'In Progress', 'Completed'
+    )),
+    CONSTRAINT CK_maintenance_completion_time CHECK (
+        completion_time IS NULL OR completion_time > start_time
+    )
 );
 GO
 
 -- ============================================================
--- SECTION 4: Foreign Key Constraints
+-- 4. Data Integrity Trigger
+--    Ensures that for trackable catalog items, the quantity in
+--    space_facility does not exceed the actual asset count.
 -- ============================================================
-
--- 4.1  booking foreign keys
-ALTER TABLE dbo.booking
-    ADD CONSTRAINT FK_booking_space
-    FOREIGN KEY (space_code) REFERENCES dbo.space(space_code)
-    ON UPDATE CASCADE
-    ON DELETE NO ACTION;
-
-ALTER TABLE dbo.booking
-    ADD CONSTRAINT FK_booking_user
-    FOREIGN KEY (requester_id) REFERENCES dbo.[user](user_id)
-    ON UPDATE NO ACTION
-    ON DELETE NO ACTION;
-GO
-
--- 4.2  booking_approval foreign keys
-ALTER TABLE dbo.booking_approval
-    ADD CONSTRAINT FK_booking_approval_booking
-    FOREIGN KEY (booking_id) REFERENCES dbo.booking(booking_id)
-    ON UPDATE NO ACTION
-    ON DELETE CASCADE;
-
-ALTER TABLE dbo.booking_approval
-    ADD CONSTRAINT FK_booking_approval_approver
-    FOREIGN KEY (approver_id) REFERENCES dbo.[user](user_id)
-    ON UPDATE NO ACTION
-    ON DELETE NO ACTION;
-GO
-
--- 4.3  booking_session foreign keys
-ALTER TABLE dbo.booking_session
-    ADD CONSTRAINT FK_booking_session_booking
-    FOREIGN KEY (booking_id) REFERENCES dbo.booking(booking_id)
-    ON UPDATE NO ACTION
-    ON DELETE CASCADE;
-
-ALTER TABLE dbo.booking_session
-    ADD CONSTRAINT FK_booking_session_checked_in_by
-    FOREIGN KEY (checked_in_by) REFERENCES dbo.[user](user_id)
-    ON UPDATE NO ACTION
-    ON DELETE NO ACTION;
-
-ALTER TABLE dbo.booking_session
-    ADD CONSTRAINT FK_booking_session_completed_by
-    FOREIGN KEY (completed_by) REFERENCES dbo.[user](user_id)
-    ON UPDATE NO ACTION
-    ON DELETE NO ACTION;
-GO
-
--- 4.4  maintenance_record foreign keys
-ALTER TABLE dbo.maintenance_record
-    ADD CONSTRAINT FK_maintenance_space
-    FOREIGN KEY (space_code) REFERENCES dbo.space(space_code)
-    ON UPDATE CASCADE
-    ON DELETE NO ACTION;
-
-ALTER TABLE dbo.maintenance_record
-    ADD CONSTRAINT FK_maintenance_reporter
-    FOREIGN KEY (reporter_id) REFERENCES dbo.[user](user_id)
-    ON UPDATE NO ACTION
-    ON DELETE NO ACTION;
-
-ALTER TABLE dbo.maintenance_record
-    ADD CONSTRAINT FK_maintenance_assignee
-    FOREIGN KEY (assigned_to) REFERENCES dbo.[user](user_id)
-    ON UPDATE NO ACTION
-    ON DELETE NO ACTION;
-GO
-
--- 4.5  space_facility foreign keys
-ALTER TABLE dbo.space_facility
-    ADD CONSTRAINT FK_space_facility_space
-    FOREIGN KEY (space_code) REFERENCES dbo.space(space_code)
-    ON UPDATE CASCADE
-    ON DELETE CASCADE;
-
-ALTER TABLE dbo.space_facility
-    ADD CONSTRAINT FK_space_facility_catalog
-    FOREIGN KEY (catalog_id) REFERENCES dbo.facility_catalog(catalog_id)
-    ON UPDATE NO ACTION
-    ON DELETE NO ACTION;
-GO
-
--- 4.6  facility_asset foreign keys
-ALTER TABLE dbo.facility_asset
-    ADD CONSTRAINT FK_facility_asset_catalog
-    FOREIGN KEY (catalog_id) REFERENCES dbo.facility_catalog(catalog_id)
-    ON UPDATE NO ACTION
-    ON DELETE NO ACTION;
-
-ALTER TABLE dbo.facility_asset
-    ADD CONSTRAINT FK_facility_asset_space
-    FOREIGN KEY (space_code) REFERENCES dbo.space(space_code)
-    ON UPDATE CASCADE
-    ON DELETE CASCADE;
-GO
-
--- ============================================================
--- SECTION 5: Data Integrity Trigger
---   trg_space_facility_quantity_validate
---   AFTER INSERT, UPDATE on space_facility
---   Ensures that for trackable items, quantity does not exceed
---   the actual count of registered assets.
--- ============================================================
-
-CREATE OR ALTER TRIGGER dbo.trg_space_facility_quantity_validate
+CREATE TRIGGER trg_space_facility_validate_quantity
 ON dbo.space_facility
 AFTER INSERT, UPDATE
 AS
@@ -338,22 +282,22 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM inserted i
-        INNER JOIN dbo.facility_catalog fc ON i.catalog_id = fc.catalog_id
+        INNER JOIN dbo.facility_catalog fc
+            ON i.catalog_id = fc.catalog_id
         WHERE fc.is_trackable = 1
           AND i.quantity > (
               SELECT COUNT(*)
               FROM dbo.facility_asset fa
-              WHERE fa.catalog_id = i.catalog_id
-                AND fa.space_code = i.space_code
+              WHERE fa.space_code = i.space_code
+                AND fa.catalog_id = i.catalog_id
           )
     )
     BEGIN
-        RAISERROR('Quantity for trackable item exceeds the number of registered physical assets in this space.', 16, 1);
+        RAISERROR(
+            'Quantity in space_facility exceeds the actual count of tracked assets for this catalog item in this space.',
+            16, 1
+        );
         ROLLBACK TRANSACTION;
-        RETURN;
     END
 END;
-GO
-
-PRINT 'Campus Space Management System DDL executed successfully.';
 GO
