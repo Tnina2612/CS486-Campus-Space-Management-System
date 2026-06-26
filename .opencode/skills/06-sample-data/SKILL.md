@@ -1,22 +1,42 @@
----
-name: 06-sample-data
-description: Prepare sample data for the SQL Server schema.
+name: db-design-pipeline-step-06
+description: Generate realistic, business-rule-driven SQL INSERT statements for sample data preparation.
 compatibility: opencode
 ---
 
 # Step 6 - Sample Data Preparation
 
 ## Objective
-Prepare realistic sample data that can be inserted after the DDL is created.
+* Generate a complete, ready-to-run SQL script containing `INSERT` statements for the Campus Space Management System.
+* Ensure data is highly realistic, context-appropriate, and strictly follows referential integrity (Foreign Key hierarchy).
+* **Crucial:** The generated data MUST act as a comprehensive Test Suite that purposefully creates scenarios to validate ALL Business Rules defined in Step 1.
 
 ## Input Context
-- Read `outputs/05-db-definition-G11.sql` first.
-- Use the table order and constraints from Step 5.
-- Keep the hybrid-pattern trigger behavior from `../db-design-pipeline/SKILL.md` in mind while choosing insert order.
+* **Source 1:** Read `outputs/01-business-req-analysis-G11.md` (Extract exact roles, statuses, and critically: **The Business Rules**).
+* **Source 2:** Read `outputs/03-logical-design-G11.md` (This is your SINGLE SOURCE OF TRUTH for exact table names, column names, constraints, and data types).
 
-## Instructions & Constraints
-- Save to: `outputs/06-sample-data-G11.sql`
-- Instruction: Write Microsoft SQL Server `INSERT` statements to populate the tables from Step 5 with realistic sample data. Ensure correct insertion order to avoid foreign key constraint violations. Include data to test normal operations (successful bookings) and exceptional cases (maintenance, rejected bookings, no-shows).
-- Note for Identity Columns: Because the tables use `IDENTITY(1,1)`, if your `INSERT` statements include specific explicit values for primary key identity columns, you MUST wrap those blocks with `SET IDENTITY_INSERT [TableName] ON;` before the statements and `SET IDENTITY_INSERT [TableName] OFF;` immediately after.
-- Critical Insertion Order for Facility Trigger: Because of the `trg_space_facility_quantity_validate` trigger, you MUST insert data into the `facility_asset` table BEFORE inserting data into the `space_facility` table for any trackable catalog items.
-- Strict Data Consistency Rule: For trackable items (`is_trackable = 1`), the `quantity` value you insert into `space_facility` MUST EXACTLY MATCH the actual number of rows you generated in `facility_asset`. Do NOT set large quantities (like 40) if you only generate 4 asset records. Keep the quantities small (e.g., 2 to 5 items) so you can easily write the corresponding `facility_asset` rows without omitting any data.
+## Execution Directives
+
+### 1. Referential Integrity (Strict Insertion Order)
+You MUST analyze the Foreign Key dependencies in Source 2 and generate `INSERT` statements in a strict hierarchical order to avoid constraint violations:
+* **Phase 1:** Base Entities (e.g., Users, Spaces, Catalogs/Categories).
+* **Phase 2:** Associative or Child Entities (e.g., Space-Facility relations, Physical Assets).
+* **Phase 3:** Transactional Entities (e.g., Bookings, Maintenance Records).
+
+### 2. Data Realism (Zero Dummy Data)
+* **Users:** Generate users covering MULTIPLE roles defined in the system. Use realistic international names (e.g., Emily Davis) and university email domains.
+* **Spaces & Assets:** Autogenerate realistic academic spaces (e.g., Alan Turing Auditorium) and valid hardware names.
+* **Timestamps:** Generate logical, chronological dates. End times MUST be strictly greater than start times.
+* **Exact Variables:** You MUST extract and use the EXACT table names, column names, and ENUM values from Source 2. Do not invent column names.
+
+### 3. Business-Rule-Driven Data Generation (The Test Suite)
+Instead of random inserts, your data MUST explicitly prove that the database design handles the real-world logic.
+* **Analyze:** Read EVERY Business Rule listed in Source 1.
+* **Scenario Generation:** For EACH rule (e.g., overlapping bookings, role constraints, hybrid facility tracking, status lifecycles, maintenance blocks), you MUST purposefully inject specific data records designed to query/test that exact rule. Ensure you include both successful operations (happy paths) and intended edge cases (e.g., a rejected booking, a no-show).
+* **Explicit Commenting:** You MUST prepend the relevant `INSERT` blocks with a SQL comment explicitly stating which Business Rule is being tested. 
+  * *Example Format:* `-- [Testing Business Rule: No Overlapping Bookings]: Inserting a rejected booking due to time conflict with an approved one.`
+
+## Output Format Requirements
+* **Target File:** Save output exactly to `outputs/06-sample-data-G11.sql`.
+* **SQL Standard:** ONLY output standard, executable SQL `INSERT` statements. 
+* **Column Explicitness:** NEVER use `INSERT INTO table VALUES (...)`. You MUST explicitly list column names: `INSERT INTO table_name (col1, col2) VALUES (val1, val2);`.
+* **Documentation:** Add blank lines and clear `--` comments separating the hierarchical phases and the specific Business Rule test blocks.
