@@ -40,5 +40,4 @@ Use Microsoft SQL Server unless the user specifies another DBMS.
 - Preserve traceability from requirement → entity → relationship → table → constraint.
 - Use Mermaid `erDiagram` for ERD.
 - Enforce strict database constraints (PK, FK, UNIQUE, CHECK).
-- Maintain standard naming conventions (snake_case).
 - Do not silently invent business rules.

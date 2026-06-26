@@ -18,10 +18,14 @@ Before assuming anything, inspect the project:
 4. If the requirement is incomplete, continue with explicit assumptions, but also create an unresolved questions section.
 
 ## Global Forced Assumptions & Business Rules Override
-The original business requirement is ambiguous regarding the `Space` and `Facility` relationship. You MUST strictly adopt the "Catalog vs. Asset Hybrid Pattern" for all subsequent steps:
-1. **Facility Catalog (`facility_catalog`):** A general catalog defining the category of items (e.g., 'Projector', 'Chair') and a flag `is_trackable` (BIT).
-2. **Space-Facility M:N Mapping (`space_facility`):** An associative table linking a `space_code` and `catalog_id`, containing a `quantity` attribute for non-trackable items. This prevents data entry fatigue.
-3. **Facility Asset 1:N Tracking (`facility_asset`):** A table for high-value, trackable assets linked to both `catalog_id` and `space_code`. It must contain an `asset_tag` (UNIQUE) and `status`.
+The original business requirement is ambiguous regarding the `SPACE` and `FACILITY` relationship. You MUST strictly adopt the "Catalog vs. Asset Hybrid Pattern" for all subsequent steps:
+1. **Facility Catalog (`FACILITY_CATALOG`):** A general catalog defining the category of items (e.g., 'Projector', 'Chair') and a flag `is_trackable` (BIT).
+2. **Space-Facility M:N Mapping (`SPACE_FACILITY`):** An associative table linking a `space_code` and `catalog_id`, containing a `quantity` attribute for non-trackable items. This prevents data entry fatigue.
+3. **Facility Asset 1:N Tracking (`FACILITY_ASSET`):** A table for high-value, trackable assets linked to both `catalog_id` and `space_code`. It must contain an `asset_tag` (UNIQUE) and `status`.
+4. **Booking Lifecycle Normalization (Strict 1-to-1):** You MUST NOT create a flat, denormalized booking table. You MUST separate the booking lifecycle into three distinct tables representing different stages:
+    * `BOOKING`: Stores ONLY the initial request data (user, space, requested times, purpose).
+    * `APPROVAL`: Stores manager/staff approval decisions and notes. It MUST have a strict 1-to-1 relationship with `BOOKING` (enforced via a `UNIQUE(booking_id)` constraint).
+    * `USAGE_SESSION`: Stores actual check-in/check-out times and physical condition of the room. It MUST have a strict 1-to-1 relationship with `BOOKING` (enforced via a `UNIQUE(booking_id)` constraint).
 
 ## Required output files
 
