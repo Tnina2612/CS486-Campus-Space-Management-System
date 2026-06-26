@@ -1,4 +1,5 @@
-name: db-design-pipeline-step-04
+---
+name: 04-design-validation
 description: Validate the relational schema against the ERD, business rules, and constraints.
 compatibility: opencode
 ---

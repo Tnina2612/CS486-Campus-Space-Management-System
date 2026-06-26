@@ -1,5 +1,5 @@
 ---
-name: db-design-pipeline-step-01
+name: 01-business-req-analysis
 description: Analyze the business requirements and produce the business requirement analysis output.
 compatibility: opencode
 ---

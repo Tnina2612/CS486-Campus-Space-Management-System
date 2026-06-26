@@ -1,5 +1,5 @@
 ---
-name: db-design-pipeline-step-07
+name: 07-query-design
 description: Write meaningful SQL Server queries for the completed design.
 compatibility: opencode
 ---

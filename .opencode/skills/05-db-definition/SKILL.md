@@ -1,5 +1,5 @@
 ---
-name: db-design-pipeline-step-05
+name: 05-db-definition
 description: Write the SQL Server DDL implementation for the logical design.
 compatibility: opencode
 ---

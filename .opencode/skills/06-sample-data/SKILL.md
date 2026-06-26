@@ -1,5 +1,5 @@
 ---
-name: db-design-pipeline-step-06
+name: 06-sample-data
 description: Prepare sample data for the SQL Server schema.
 compatibility: opencode
 ---
