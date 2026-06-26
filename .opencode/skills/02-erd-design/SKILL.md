@@ -1,5 +1,5 @@
 ---
-name: 02-erd-design
+name: db-design-pipeline-step-02
 description: Convert the requirement analysis into a conceptual ERD.
 compatibility: opencode
 ---
@@ -45,6 +45,7 @@ Convert the requirement analysis into a conceptual ERD with clear entities, rela
 - **CRITICAL FORMATTING CONSTRAINTS:**
     1. Do NOT wrap the Mermaid code in markdown fences (e.g., do NOT write ````mermaid` at the top and ````` at the bottom). Output the raw `erDiagram` text directly.
     2. Do NOT include any inline comments (e.g., `%%`) inside the Mermaid diagram code, as this will break the CLI output parser.
+    3. **Key Markers**: Mermaid `erDiagram` natively supports only `PK` and `FK` markers. Any other key designations or attribute constraints (e.g., UK, AK, Candidate Key) MUST be enclosed in double quotes (e.g., `"UK"`) at the end of the attribute definition to ensure valid Mermaid syntax.
 
 - **CONCEPTUAL MODEL ONLY**: Do not include:
     1. Foreign keys.
