@@ -1,4 +1,5 @@
-name: db-design-pipeline-step-06
+---
+name: 06-sample-data
 description: Generate realistic, business-rule-driven SQL INSERT statements for sample data preparation.
 compatibility: opencode
 ---
