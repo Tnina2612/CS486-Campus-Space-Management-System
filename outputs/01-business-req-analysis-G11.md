@@ -1,162 +1,172 @@
-# Business Requirement Analysis — G11
+# 01 — Business Requirement Analysis
 
 ## 1. Business Purpose
-The School of Computer Science manages several shared physical spaces (auditoriums, classrooms, computer laboratories, project laboratories, meeting rooms, and student workspaces) used for teaching, seminars, examinations, workshops, student projects, research activities, and academic events. Currently, booking handling is manual. The School wants a database system to manage space booking, approval, usage sessions, maintenance, incident reporting, and facility utilization — ensuring fair scheduling, avoiding overlapping bookings, preventing use of unavailable spaces, and preserving usage history.
 
-## 2. Actors
+The School of Computer Science wants to build a database system to manage the booking and usage of shared campus spaces (auditoriums, classrooms, computer laboratories, project laboratories, meeting rooms, student workspaces). The system must replace the current manual process (email, phone, spreadsheets) to avoid overlapping bookings, prevent use of unavailable spaces, and maintain a complete usage history.
 
-| Actor | Description |
-|---|---|
-| Student | A university student who may request space booking |
-| Lecturer | A faculty member who may request space booking |
-| Teaching Assistant | A TA who may request space booking |
-| Facility Staff | Staff responsible for checking in/out bookings, processing maintenance, managing spaces |
-| Department Administrator | Administrator who may oversee booking processes |
-| Facility Manager | Manager who oversees facility operations and may approve/reject bookings |
+## 2. Actors / User Roles
 
-## 3. Entities and Attributes
+| Role | Description |
+|------|-------------|
+| Student | Submits booking requests for student activities. |
+| Lecturer | Submits booking requests for lectures, examinations, seminars. |
+| Teaching Assistant | Submits booking requests for teaching support activities. |
+| Facility Staff | Approves/rejects bookings, checks in/out sessions, records maintenance. |
+| Department Administrator | Manages spaces, users, and reports. |
+| Facility Manager | Oversees the entire system, views analytics, manages maintenance. |
 
-### 3.1 User (`user`)
-| Attribute | Description |
-|---|---|
-| user_id | Primary key, unique identifier |
-| full_name | User's full name |
-| email | Email address |
-| phone_number | Contact phone number |
-| role | Student, Lecturer, TA, Facility Staff, Dept Admin, Facility Manager |
-| department | Department name |
-| account_status | Active, inactive, suspended |
+All actors have a university account.
 
-### 3.2 Space (`space`)
-| Attribute | Description |
-|---|---|
-| space_code | Primary key, unique code |
-| space_name | Name of the space |
-| space_type | Auditorium, Classroom, Computer Laboratory, Project Laboratory, Meeting Room, Student Workspace |
-| building | Building name |
-| floor | Floor number |
-| room_number | Room number |
-| capacity | Maximum occupancy |
-| current_status | Available, In Use, Under Maintenance, Temporarily Closed, Retired |
-| usage_policy | Text describing rules for using the space |
+## 3. Entities, Attributes, and Data Types
 
-### 3.3 Facility Catalog (`facility_catalog`) — Catalog vs. Asset Hybrid Pattern
-| Attribute | Description |
-|---|---|
-| catalog_id | Primary key, unique identifier |
-| name | Name of facility type (e.g., 'Projector', 'Whiteboard') |
-| description | Optional description |
-| is_trackable | BIT flag: 1 = high-value/trackable asset, 0 = non-trackable |
+### USER
+| Attribute | Type | Notes |
+|-----------|------|-------|
+| user_id | PK (INT) | Unique identifier |
+| full_name | NVARCHAR(100) | |
+| email | NVARCHAR(255) | Unique |
+| phone | NVARCHAR(20) | |
+| role | NVARCHAR(50) | student, lecturer, teaching_assistant, facility_staff, department_administrator, facility_manager |
+| department | NVARCHAR(100) | |
+| account_status | NVARCHAR(20) | active, inactive, suspended |
 
-### 3.4 Space-Facility Mapping (`space_facility`) — M:N associative
-| Attribute | Description |
-|---|---|
-| space_code | FK → space.space_code |
-| catalog_id | FK → facility_catalog.catalog_id |
-| quantity | Integer count for non-trackable items |
+### SPACE
+| Attribute | Type | Notes |
+|-----------|------|-------|
+| space_code | PK (NVARCHAR(20)) | Unique identifier, e.g., "A101" |
+| space_name | NVARCHAR(100) | |
+| space_type | NVARCHAR(50) | auditorium, classroom, computer_lab, project_lab, meeting_room, workspace |
+| building | NVARCHAR(100) | |
+| floor | INT | |
+| room_number | NVARCHAR(20) | |
+| capacity | INT | |
+| current_status | NVARCHAR(20) | available, in_use, under_maintenance, temporarily_closed, retired |
+| usage_policy | NVARCHAR(MAX) | |
 
-### 3.5 Facility Asset (`facility_asset`) — Trackable assets
-| Attribute | Description |
-|---|---|
-| asset_id | Primary key |
-| asset_tag | Unique tag/identifier |
-| catalog_id | FK → facility_catalog.catalog_id |
-| space_code | FK → space.space_code (current location) |
-| status | Working, Under Repair, Retired |
+### FACILITY_CATALOG
+| Attribute | Type | Notes |
+|-----------|------|-------|
+| catalog_id | PK (INT) | Unique identifier |
+| facility_name | NVARCHAR(100) | e.g., 'Projector', 'Whiteboard' |
+| description | NVARCHAR(MAX) | |
+| is_trackable | BIT | 1 = trackable asset, 0 = non-trackable quantity-based item |
 
-### 3.6 Booking Request (`booking_request`)
-| Attribute | Description |
-|---|---|
-| booking_id | Primary key |
-| requester_id | FK → user.user_id (who submitted) |
-| space_code | FK → space.space_code |
-| requested_start_time | Datetime of requested start |
-| requested_end_time | Datetime of requested end |
-| purpose | Lecture, Examination, Seminar, Workshop, Meeting, Student Activity, Administrative Event |
-| expected_participants | Number of participants |
-| status | Pending, Approved, Rejected, Cancelled, Checked In, Completed, No-Show |
-| created_at | Timestamp of submission |
+### SPACE_FACILITY (resolves SPACE ⟷ FACILITY_CATALOG M:N)
+| Attribute | Type | Notes |
+|-----------|------|-------|
+| space_code | PK, FK (NVARCHAR(20)) | References SPACE |
+| catalog_id | PK, FK (INT) | References FACILITY_CATALOG |
+| quantity | INT | Number of items for non-trackable facilities |
 
-### 3.7 Booking Decision (`booking_decision`)
-| Attribute | Description |
-|---|---|
-| booking_id | PK & FK → booking_request.booking_id |
-| staff_id | FK → user.user_id (who made decision) |
-| decision | Approved or Rejected |
-| decision_time | Datetime of decision |
-| decision_note | Free-text note |
-| rejection_reason | Required if decision is Rejected |
+### FACILITY_ASSET (trackable high-value assets)
+| Attribute | Type | Notes |
+|-----------|------|-------|
+| asset_id | PK (INT) | Unique identifier |
+| catalog_id | FK (INT) | References FACILITY_CATALOG |
+| space_code | FK (NVARCHAR(20)) | Current location (references SPACE) |
+| asset_tag | NVARCHAR(50) | UNIQUE |
+| status | NVARCHAR(20) | available, in_use, under_maintenance, retired |
 
-### 3.8 Booking Session (`booking_session`) — Check-in / Check-out
-| Attribute | Description |
-|---|---|
-| booking_id | PK & FK → booking_request.booking_id |
-| actual_start_time | Datetime when user checked in |
-| checked_in_by | FK → user.user_id (staff who performed check-in) |
-| initial_condition | Text describing condition at check-in |
-| actual_end_time | Datetime when session ended |
-| final_condition | Text describing condition at check-out |
-| usage_notes | Free-text notes about the session |
+### BOOKING (stores only the initial request)
+| Attribute | Type | Notes |
+|-----------|------|-------|
+| booking_id | PK (INT) | Unique identifier |
+| requester_id | FK (INT) | References USER |
+| space_code | FK (NVARCHAR(20)) | References SPACE |
+| requested_start | DATETIME2 | |
+| requested_end | DATETIME2 | |
+| purpose | NVARCHAR(50) | lecture, examination, seminar, workshop, meeting, student_activity, administrative_event |
+| expected_participants | INT | |
+| status | NVARCHAR(20) | pending, approved, rejected, cancelled, checked_in, completed, no_show |
+| created_at | DATETIME2 | |
 
-### 3.9 Maintenance Record (`maintenance_record`)
-| Attribute | Description |
-|---|---|
-| maintenance_id | Primary key |
-| space_code | FK → space.space_code |
-| reported_by | FK → user.user_id |
-| assigned_to | FK → user.user_id (staff assigned) |
-| problem_description | Description of the issue |
-| problem_type | Broken Projector, AC Failure, Damaged Furniture, Cleaning Issue, Network Problem |
-| start_time | Datetime reported / started |
-| completion_time | Datetime completed (nullable) |
-| status | Reported, In Progress, Completed |
-| result_note | Result description after completion |
+### APPROVAL (strict 1-to-1 with BOOKING)
+| Attribute | Type | Notes |
+|-----------|------|-------|
+| approval_id | PK (INT) | Unique identifier |
+| booking_id | FK (INT), UNIQUE | References BOOKING |
+| reviewer_id | FK (INT) | References USER (facility staff/manager) |
+| decision_time | DATETIME2 | |
+| decision_note | NVARCHAR(MAX) | |
+| rejection_reason | NVARCHAR(MAX) | NULL if approved |
+
+### USAGE_SESSION (strict 1-to-1 with BOOKING)
+| Attribute | Type | Notes |
+|-----------|------|-------|
+| session_id | PK (INT) | Unique identifier |
+| booking_id | FK (INT), UNIQUE | References BOOKING |
+| checked_in_by | FK (INT) | References USER (facility staff) |
+| actual_start_time | DATETIME2 | |
+| initial_condition | NVARCHAR(MAX) | |
+| checked_out_by | FK (INT) | References USER (facility staff), NULL if not checked out |
+| actual_end_time | DATETIME2 | NULL if not checked out |
+| final_condition | NVARCHAR(MAX) | NULL if not checked out |
+| usage_notes | NVARCHAR(MAX) | NULL if not checked out |
+
+### MAINTENANCE_RECORD
+| Attribute | Type | Notes |
+|-----------|------|-------|
+| maintenance_id | PK (INT) | Unique identifier |
+| space_code | FK (NVARCHAR(20)) | References SPACE |
+| reporter_id | FK (INT) | References USER |
+| assigned_staff_id | FK (INT) | References USER, NULL if not assigned |
+| problem_description | NVARCHAR(MAX) | |
+| problem_category | NVARCHAR(50) | broken_projector, ac_failure, damaged_furniture, cleaning, network, other |
+| start_time | DATETIME2 | |
+| completion_time | DATETIME2 | NULL if not completed |
+| status | NVARCHAR(20) | reported, in_progress, completed, cancelled |
+| result_note | NVARCHAR(MAX) | |
 
 ## 4. Relationships and Cardinalities
 
-| Left Entity | Relationship | Right Entity | Cardinality |
-|---|---|---|---|
-| User | submits | Booking Request | 1:N |
-| Space | is booked by | Booking Request | 1:N |
-| Booking Request | has decision by | User (Staff) | N:1 |
-| Booking Request | has session | Booking Session | 1:1 |
-| Space | has facilities cataloged in | Facility Catalog | M:N (via space_facility) |
-| Facility Catalog | is tracked by | Facility Asset | 1:N |
-| Space | contains | Facility Asset | 1:N |
-| Space | has | Maintenance Record | 1:N |
-| User | reports | Maintenance Record | 1:N |
-| User | is assigned to | Maintenance Record | 1:N |
+| Entity 1 | Entity 2 | Cardinality | Description |
+|----------|----------|-------------|-------------|
+| USER | BOOKING | 1:N | One user can make many booking requests. |
+| SPACE | BOOKING | 1:N | One space can have many bookings. |
+| SPACE | FACILITY_CATALOG | M:N | Via SPACE_FACILITY; a space can have many facility types, a facility type can be in many spaces. |
+| FACILITY_CATALOG | FACILITY_ASSET | 1:N | One catalog entry can have many trackable assets. |
+| SPACE | FACILITY_ASSET | 1:N | One space can contain many trackable assets. |
+| BOOKING | APPROVAL | 1:1 | Each booking has at most one approval decision. |
+| BOOKING | USAGE_SESSION | 1:1 | Each booking has at most one usage session. |
+| USER | APPROVAL | 1:N | One staff/manager can approve/reject many bookings. |
+| USER | USAGE_SESSION (checked_in_by) | 1:N | One staff can check in many sessions. |
+| USER | USAGE_SESSION (checked_out_by) | 1:N | One staff can check out many sessions. |
+| SPACE | MAINTENANCE_RECORD | 1:N | One space can have many maintenance records. |
+| USER | MAINTENANCE_RECORD (reports) | 1:N | A user can report many maintenance issues. |
+| USER | MAINTENANCE_RECORD (assigned) | 1:N | A staff can be assigned to many maintenance tasks. |
 
 ## 5. Business Rules
 
-1. **Unique Account:** Each user must have a university account (email identifier).
-2. **No Overlap:** Two approved bookings for the same space must not have overlapping time periods.
-3. **Unavailable Space Block:** A space whose status is Under Maintenance, Temporarily Closed, or Retired cannot be booked.
-4. **Decision Logging:** When a booking is approved or rejected, the staff member, decision time, and note must be recorded.
-5. **Rejection Reason Required:** If a booking is rejected, a rejection reason is mandatory.
-6. **Check-in Recording:** Check-in records actual start time, who performed the check-in, and initial space condition.
-7. **Check-out Recording:** Completion records actual end time, final space condition, and usage notes.
-8. **Maintenance Blocks Booking:** While a maintenance record is open (status = Reported or In Progress), the related space cannot be booked.
-9. **Historical Preservation:** The system must keep historical records (no physical deletion) of bookings and maintenance activities.
+1. **Unique booking constraint:** A space cannot have two approved bookings with overlapping time periods.
+2. **Availability constraint:** A space that is under maintenance, temporarily closed, or retired cannot be booked.
+3. **Status lifecycle:** Booking status flows: pending → approved/rejected → (if approved) checked_in → completed/no_show.
+4. **Strict 1-to-1 approval:** A booking can have at most one approval record. If rejected, a rejection_reason must be recorded.
+5. **Strict 1-to-1 usage session:** A booking can have at most one usage session.
+6. **Trackable vs. non-trackable:** If `is_trackable = 0`, quantity is tracked via SPACE_FACILITY. If `is_trackable = 1`, individual assets are tracked via FACILITY_ASSET.
+7. **Asset tag uniqueness:** Each FACILITY_ASSET.asset_tag must be unique.
+8. **Maintenance blocks booking:** A space with an active maintenance record (status = reported or in_progress) cannot be booked.
+9. **User account:** All users must have a university account with a unique email.
+10. **Capacity check:** The expected_participants should not exceed the space capacity (application-level enforcement).
+11. **Time validity:** requested_start must be before requested_end in a booking.
+12. **History preservation:** Historical booking and maintenance records must be retained (no physical deletion).
 
-## 6. Catalog vs. Asset Hybrid Pattern (Forced Assumption)
+## 6. Assumptions
 
-Per the pipeline global rules, the ambiguous "facilities in each space" requirement is resolved as follows:
+- The system uses Microsoft SQL Server as the DBMS.
+- Only facility staff or managers can approve/reject bookings.
+- Check-in and check-out are performed by facility staff, not the requester.
+- A "no-show" status is set when check-in does not occur within a reasonable time after the requested start time.
+- Facility categories are predefined in the FACILITY_CATALOG table.
+- Space codes are human-readable identifiers (e.g., "A101").
+- USER.account_status values (active, inactive, suspended) are predefined system values.
+- MAINTENANCE_RECORD.status values (reported, in_progress, completed, cancelled) are predefined system values.
+- FACILITY_ASSET.status values (available, in_use, under_maintenance, retired) are predefined system values.
+- MAINTENANCE_RECORD.problem_category values (broken_projector, ac_failure, damaged_furniture, cleaning, network, other) are predefined categories.
 
-- **`facility_catalog`**: A general catalog of facility types with an `is_trackable` flag.
-- **`space_facility`**: M:N mapping table linking space to catalog items with a `quantity` for non-trackable items (e.g., "10 chairs in room A").
-- **`facility_asset`**: A 1:N table for high-value, individually trackable assets (e.g., a specific projector with a unique asset tag).
+## 7. Open Questions
 
-## 7. Assumptions
-
-1. Booking status transitions follow a linear workflow: Pending → Approved → Checked In → Completed (or Rejected / Cancelled / No-Show).
-2. A space can have multiple facility catalog entries via the M:N mapping.
-3. Only Facility Staff or Facility Manager can perform check-in and check-out.
-4. Maintenance records are linked to a specific space; if maintenance is ongoing, the space's `current_status` is updated accordingly.
-5. A booking can have only one decision (approve/reject) and one session (check-in/check-out).
-
-## 8. Open Questions
-
-1. Should there be a recurring booking pattern (e.g., weekly lectures)?
-2. Should the system support waitlisting when a space is already booked?
-3. Should notifications be part of the system scope (email alerts on approval/rejection)?
+- What is the grace period for considering a booking as "no-show"?
+- Should notifications be sent when a booking is approved/rejected/cancelled?
+- Should there be a recurring booking feature for regular classes?
+- What is the maximum advance booking window?
+- Should there be a waitlist for popular spaces?

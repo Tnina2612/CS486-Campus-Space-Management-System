@@ -1,213 +1,191 @@
--- ============================================================
--- Query Design — G11
+-- ====================================================================
+-- 07-query-design-G11.sql
+-- Query Design — Campus Space Management System
 -- DBMS: Microsoft SQL Server
--- ============================================================
+-- ====================================================================
+
 USE [CampusSpaceManagement];
 GO
 
--- ============================================================
--- Query 1: Available Spaces with Facilities Summary
--- ---------------------------------------------------------
+-- ====================================================================
+-- QUERY 1: Upcoming approved bookings per space
+-- ====================================================================
 -- Business Question:
---   Which spaces are currently available, and what facilities
---   (trackable and non-trackable) do they have?
--- Target Users:
---   Students, Lecturers, TA, Facility Staff
--- Why Useful:
---   Helps users quickly identify bookable spaces that meet
---   their facility requirements (e.g., a room with a projector).
--- ============================================================
+--   Which spaces have approved or checked-in bookings starting from
+--   today onwards, and who are the requesters?
+-- Target User(s):
+--   Facility staff who need to prepare rooms before sessions.
+-- Usefulness:
+--   Allows staff to see a daily schedule of which spaces will be used,
+--   by whom, and for what purpose, so they can prepare equipment,
+--   unlock rooms, and plan cleaning.
 SELECT
     s.space_code,
     s.space_name,
-    s.space_type,
-    s.building,
-    s.floor,
-    s.room_number,
-    s.capacity,
-    (
-        SELECT STRING_AGG(fc.name + ' (' + CAST(sf.quantity AS NVARCHAR) + ')', ', ')
-        FROM dbo.space_facility sf
-        INNER JOIN dbo.facility_catalog fc ON sf.catalog_id = fc.catalog_id
-        WHERE sf.space_code = s.space_code
-    ) AS facility_list,
-    (
-        SELECT COUNT(*)
-        FROM dbo.facility_asset fa
-        WHERE fa.space_code = s.space_code AND fa.status = 'Working'
-    ) AS working_assets
-FROM dbo.space s
-WHERE s.current_status = 'Available'
-ORDER BY s.building, s.floor, s.room_number;
+    u.full_name  AS requester_name,
+    u.email      AS requester_email,
+    b.requested_start,
+    b.requested_end,
+    b.purpose,
+    b.expected_participants
+FROM BOOKING b
+INNER JOIN SPACE s ON s.space_code = b.space_code
+INNER JOIN [USER] u ON u.user_id = b.requester_id
+WHERE b.status IN ('approved', 'checked_in')
+  AND b.requested_start >= CAST(GETDATE() AS DATETIME2)
+ORDER BY b.requested_start ASC;
 GO
 
-
--- ============================================================
--- Query 2: Weekly Booking Schedule for a Specific Space
--- ---------------------------------------------------------
+-- ====================================================================
+-- QUERY 2: Full booking audit trail (request → approval → session)
+-- ====================================================================
 -- Business Question:
---   What is the upcoming week's booking schedule for space
---   'B201', and what is the status of each booking?
--- Target Users:
---   Facility Staff, Facility Manager
--- Why Useful:
---   Enables staff to quickly see daily occupancy, avoid
---   scheduling conflicts, and prepare rooms in advance.
--- ============================================================
-DECLARE @TargetSpace NVARCHAR(20) = 'B201';
-DECLARE @WeekStart DATE = '2026-06-29';
-DECLARE @WeekEnd DATE = '2026-07-05';
-
+--   What is the complete lifecycle of every booking from initial
+--   request through approval to actual room usage?
+-- Target User(s):
+--   Facility manager, department administrator — auditing and
+--   dispute resolution.
+-- Usefulness:
+--   Provides a single view linking the booking request, the approval
+--   decision, and the physical usage session. Essential for tracing
+--   what happened when a discrepancy arises (e.g., a room was approved
+--   but never used).
 SELECT
-    br.booking_id,
-    u.full_name AS requester,
-    br.purpose,
-    br.requested_start_time,
-    br.requested_end_time,
-    br.status,
-    bd.decision,
-    CASE
-        WHEN br.status = 'Checked In' THEN bs.actual_start_time
-        ELSE NULL
-    END AS actual_start_time,
-    CASE
-        WHEN br.status = 'Completed' THEN bs.actual_end_time
-        ELSE NULL
-    END AS actual_end_time
-FROM dbo.booking_request br
-INNER JOIN dbo.[user] u ON br.requester_id = u.user_id
-LEFT JOIN dbo.booking_decision bd ON br.booking_id = bd.booking_id
-LEFT JOIN dbo.booking_session bs ON br.booking_id = bs.booking_id
-WHERE br.space_code = @TargetSpace
-  AND br.requested_start_time >= @WeekStart
-  AND br.requested_start_time < DATEADD(DAY, 1, @WeekEnd)
-  AND br.status NOT IN ('Cancelled', 'Rejected')
-ORDER BY br.requested_start_time;
+    b.booking_id,
+    requester.full_name       AS requester,
+    s.space_code,
+    s.space_name,
+    b.purpose,
+    b.requested_start,
+    b.requested_end,
+    b.status                  AS booking_status,
+    reviewer.full_name        AS reviewer,
+    a.decision_time,
+    a.decision_note,
+    a.rejection_reason,
+    staff_in.full_name        AS checked_in_by,
+    us.actual_start_time,
+    us.initial_condition,
+    staff_out.full_name       AS checked_out_by,
+    us.actual_end_time,
+    us.final_condition,
+    us.usage_notes
+FROM BOOKING b
+INNER JOIN SPACE s ON s.space_code = b.space_code
+INNER JOIN [USER] requester ON requester.user_id = b.requester_id
+LEFT JOIN APPROVAL a ON a.booking_id = b.booking_id
+LEFT JOIN [USER] reviewer ON reviewer.user_id = a.reviewer_id
+LEFT JOIN USAGE_SESSION us ON us.booking_id = b.booking_id
+LEFT JOIN [USER] staff_in ON staff_in.user_id = us.checked_in_by
+LEFT JOIN [USER] staff_out ON staff_out.user_id = us.checked_out_by
+ORDER BY b.created_at DESC;
 GO
 
-
--- ============================================================
--- Query 3: Active Maintenance Records with Details
--- ---------------------------------------------------------
+-- ====================================================================
+-- QUERY 3: Active maintenance issues with space and staff details
+-- ====================================================================
 -- Business Question:
---   What maintenance issues are currently open (Reported or
---   In Progress), which space do they affect, who reported
---   them, and who is assigned?
--- Target Users:
---   Facility Staff, Facility Manager
--- Why Useful:
---   Provides a real-time view of all ongoing maintenance so
---   that managers can prioritize repairs and block affected
---   spaces from being booked.
--- ============================================================
+--   Which spaces currently have unresolved maintenance issues, what
+--   is the problem, and who is assigned?
+-- Target User(s):
+--   Facility manager monitoring workload; facility staff viewing
+--   their assignments.
+-- Usefulness:
+--   Provides a real-time view of all active (reported/in_progress)
+--   maintenance records so management can prioritise repairs and
+--   communicate space unavailability to booking staff.
 SELECT
     mr.maintenance_id,
     s.space_code,
     s.space_name,
-    s.building,
     s.room_number,
-    mr.problem_type,
+    s.building,
+    reporter.full_name    AS reported_by,
+    assigned.full_name    AS assigned_to,
+    mr.problem_category,
     mr.problem_description,
-    reporter.full_name AS reported_by,
-    assignee.full_name  AS assigned_to,
     mr.start_time,
-    mr.status,
-    mr.result_note,
-    DATEDIFF(DAY, mr.start_time, GETUTCDATE()) AS days_open
-FROM dbo.maintenance_record mr
-INNER JOIN dbo.space s ON mr.space_code = s.space_code
-INNER JOIN dbo.[user] reporter ON mr.reported_by = reporter.user_id
-LEFT JOIN dbo.[user] assignee ON mr.assigned_to = assignee.user_id
-WHERE mr.status IN ('Reported', 'In Progress')
-ORDER BY
-    CASE mr.status WHEN 'Reported' THEN 0 ELSE 1 END,
-    mr.start_time;
+    mr.status             AS maintenance_status
+FROM MAINTENANCE_RECORD mr
+INNER JOIN SPACE s ON s.space_code = mr.space_code
+INNER JOIN [USER] reporter ON reporter.user_id = mr.reporter_id
+LEFT JOIN [USER] assigned ON assigned.user_id = mr.assigned_staff_id
+WHERE mr.status IN ('reported', 'in_progress')
+ORDER BY mr.start_time DESC;
 GO
 
-
--- ============================================================
--- Query 4: Booking History for a Specific User
--- ---------------------------------------------------------
+-- ====================================================================
+-- QUERY 4: No-show booking list
+-- ====================================================================
 -- Business Question:
---   What is the complete booking history for user 'Nguyen Van A'
---   (user_id = 1), including decision and session details?
--- Target Users:
---   Any user (students, lecturers, staff), Dept Admin
--- Why Useful:
---   Enables users to track their own booking history, check
---   approval status, review past usage, and verify any
---   no-show records that may affect future bookings.
--- ============================================================
-DECLARE @TargetUser INT = 1;
-
+--   Which bookings resulted in a no-show, and which users and spaces
+--   were involved?
+-- Target User(s):
+--   Facility staff, facility manager — to identify missed bookings
+--   and follow up with requesters.
+-- Usefulness:
+--   Provides a detailed list of all no-show bookings so the school
+--   can track space wastage and inform policy decisions (e.g.,
+--   contacting habitual no-show users).
 SELECT
-    br.booking_id,
+    b.booking_id,
+    u.full_name           AS requester_name,
+    u.email               AS requester_email,
+    u.role                AS requester_role,
     s.space_code,
     s.space_name,
-    br.purpose,
-    br.requested_start_time,
-    br.requested_end_time,
-    br.expected_participants,
-    br.status,
-    br.created_at AS submitted_at,
-    bd.decision,
-    bd.decision_time,
-    bd.decision_note,
-    bd.rejection_reason,
-    staff.full_name AS decided_by,
-    bs.actual_start_time,
-    bs.actual_end_time,
-    bs.initial_condition,
-    bs.final_condition,
-    bs.usage_notes
-FROM dbo.booking_request br
-INNER JOIN dbo.space s ON br.space_code = s.space_code
-LEFT JOIN dbo.booking_decision bd ON br.booking_id = bd.booking_id
-LEFT JOIN dbo.[user] staff ON bd.staff_id = staff.user_id
-LEFT JOIN dbo.booking_session bs ON br.booking_id = bs.booking_id
-WHERE br.requester_id = @TargetUser
-ORDER BY br.requested_start_time DESC;
+    b.requested_start,
+    b.requested_end,
+    b.purpose,
+    b.expected_participants,
+    b.created_at          AS request_created_at
+FROM BOOKING b
+INNER JOIN [USER] u ON u.user_id = b.requester_id
+INNER JOIN SPACE s ON s.space_code = b.space_code
+WHERE b.status = 'no_show'
+ORDER BY b.requested_start DESC;
 GO
 
-
--- ============================================================
--- Query 5: Facility Inventory by Space (Hybrid Pattern View)
--- ---------------------------------------------------------
+-- ====================================================================
+-- QUERY 5: Facility inventory per space (trackable assets +
+--          non-trackable catalog quantities)
+-- ====================================================================
 -- Business Question:
---   What is the complete facility inventory for each space,
---   showing both catalog-level (non-trackable) quantities and
---   individual trackable assets with their status?
--- Target Users:
---   Facility Manager, Facility Staff
--- Why Useful:
---   Provides a unified inventory view combining the M:N
---   catalog mapping (for bulk items like chairs/whiteboards)
---   and individual asset tracking (for projectors, computers).
---   Essential for auditing, maintenance planning, and
---   procurement decisions.
--- ============================================================
+--   What facilities are installed in each space, broken down by
+--   trackable assets (individual tagged items) and non-trackable
+--   quantities?
+-- Target User(s):
+--   Facility manager, facility staff conducting equipment audits.
+-- Usefulness:
+--   Implements the "Catalog vs. Asset Hybrid Pattern" by combining
+--   both inventory views in one report. Staff can see both how many
+--   whiteboards (non-trackable) and which individual computers
+--   (trackable) exist per space.
 SELECT
     s.space_code,
     s.space_name,
-    fc.name AS facility_name,
+    fc.facility_name,
     fc.is_trackable,
     CASE
-        WHEN fc.is_trackable = 0 THEN CAST(sf.quantity AS NVARCHAR)
+        WHEN fc.is_trackable = 0 THEN CAST(sf.quantity AS NVARCHAR(10))
         ELSE NULL
-    END AS quantity,
+    END AS non_trackable_quantity,
     CASE
         WHEN fc.is_trackable = 1 THEN fa.asset_tag
         ELSE NULL
-    END AS asset_tag,
+    END AS trackable_asset_tag,
     CASE
         WHEN fc.is_trackable = 1 THEN fa.status
         ELSE NULL
     END AS asset_status
-FROM dbo.space s
-INNER JOIN dbo.space_facility sf ON s.space_code = sf.space_code
-INNER JOIN dbo.facility_catalog fc ON sf.catalog_id = fc.catalog_id
-LEFT JOIN dbo.facility_asset fa
-    ON fa.catalog_id = fc.catalog_id AND fa.space_code = s.space_code
-WHERE s.current_status != 'Retired'
-ORDER BY s.space_code, fc.name, fa.asset_tag;
+FROM SPACE s
+INNER JOIN SPACE_FACILITY sf ON sf.space_code = s.space_code
+INNER JOIN FACILITY_CATALOG fc ON fc.catalog_id = sf.catalog_id
+LEFT JOIN FACILITY_ASSET fa ON fa.catalog_id = sf.catalog_id
+    AND fa.space_code = s.space_code
+ORDER BY s.space_code, fc.facility_name, fa.asset_tag;
 GO
+
+-- ====================================================================
+-- END OF QUERY DESIGN
+-- ====================================================================

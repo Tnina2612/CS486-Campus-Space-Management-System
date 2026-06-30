@@ -42,6 +42,12 @@ compatibility: opencode
   * **[FK Placement]:** Ensure Foreign Keys are placed correctly on the "Many" side. Mark as **FAIL** if placed on the wrong side or missing.
   * **[Participation Constraint] :** Mark as **FAIL** if the FK lacks a `NOT NULL` constraint when the "Many" side has mandatory participation in the relationship, or incorrectly forces `NOT NULL` when participation is optional.
 
+* **Non-FK Attribute Nullability:**
+  * For every non-FK column in every table, determine from Step 1 / the business requirement whether that piece of information is always known at the moment the row is created, or whether it is only filled in later as part of a lifecycle/workflow.
+  * Mark as **FAIL** if a column is nullable in Step 3 but the requirement implies it must always have a value at the point the row is created.
+  * Mark as **FAIL** if a column is `NOT NULL` in Step 3 but the requirement implies the value is only known or recorded at a later stage of the lifecycle (i.e. the row exists before this value is available).
+  * Produce a table: `[Table] | [Column] | [Step 3 Nullable?] | [Expected timing per requirement] | [Status]` covering every column whose value depends on a lifecycle stage (e.g. anything described in the requirement as being recorded "when X happens" rather than at initial submission).
+
 * **M:N Relationships (Many-to-Many):**
   * Ensure a junction table exists. Must use composite Primary Keys or a Surrogate PK with a `UNIQUE` constraint on the two FKs. Mark as **FAIL** if invalid.
 
@@ -74,6 +80,12 @@ compatibility: opencode
   * **[CHECK - Format/Logic]:** Flag as **WARNING/FAIL** if text/numeric columns lack basic format or boundary validation (e.g., emails must contain `@`).
   * **[CHECK - Chronological]:** Actively scan EVERY table for ALL pairs of date/time columns. **WARNING: A single table may contain MULTIPLE chronological pairs** (e.g., a Booking table might have `requested_start`/`end` AND `check_in`/`check_out`). You MUST evaluate every single pair independently. Mark as **FAIL** if ANY pair lacks an explicit `CHECK` constraint ensuring the end time is >= the start time. Do not skip any tables.
   * **[Allowed Value Sets]:** Constrained correctly using `ENUM` or `CHECK IN (...)`.
+  * **[Enum Value Fidelity]:** For every `CHECK IN (...)` or `ENUM` constraint, compare each literal value character-by-character against the exact wording used in Step 1. Mark as **FAIL** if:
+    - A value is abbreviated, truncated, or reformatted compared to how Step 1 wrote it (e.g. a shortened form, an acronym, or a different word choice for the same concept).
+    - A value uses a different casing or naming convention than Step 1 without that convention being explicitly stated as a project-wide rule in Step 1 or Step 3.
+    - A value exists in the schema but does NOT appear anywhere in Step 1 (i.e. it was invented). This applies in particular to any status/lifecycle column whose values were not explicitly enumerated in Step 1 — flag it as **FAIL** with the note "values not traceable to Step 1; must be confirmed as an explicit assumption."
+    - A value from Step 1 is missing from the schema's CHECK/ENUM list.
+  * List every enum/status column found across all tables and produce a side-by-side comparison table: `[Column] | [Step 1 values] | [Step 3 schema values] | [Match?]`. This table is mandatory output, not optional — include it even if all values match.
 
 ## Output Format Requirements
 * **Target File:** Save output to exactly `outputs/04-design-validation-G11.md`.
