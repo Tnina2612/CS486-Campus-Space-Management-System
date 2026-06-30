@@ -41,9 +41,8 @@ Convert the requirement analysis into a conceptual ERD with clear entities, rela
     2. Remove any unsupported elements before producing the final ERD.
 
 - **CRITICAL FORMATTING CONSTRAINTS:**
-    1. Do NOT wrap the Mermaid code in markdown fences (e.g., do NOT write ````mermaid` at the top and ````` at the bottom). Output the raw `erDiagram` text directly.
-    2. Do NOT include any inline comments (e.g., `%%`) inside the Mermaid diagram code, as this will break the CLI output parser.
-    3. **Key Markers**: Mermaid `erDiagram` natively supports `PK` and `FK` markers. However, because this is a Conceptual model, **you MUST NOT use `FK` markers**. Use `PK` for primary identifiers. Any other attribute constraints (e.g., UK, Candidate Key) MUST be enclosed in double quotes (e.g., `"UK"`) at the end of the attribute definition.
+    1. Do NOT include any inline comments (e.g., `%%`) inside the Mermaid diagram code, as this will break the CLI output parser.
+    2. **Key Markers**: Mermaid `erDiagram` natively supports `PK` and `FK` markers. However, because this is a Conceptual model, **you MUST NOT use `FK` markers**. Use `PK` for primary identifiers. Any other attribute constraints (e.g., UK, Candidate Key) MUST be enclosed in double quotes (e.g., `"UK"`) at the end of the attribute definition.
 
 - **CONCEPTUAL MODEL ONLY**: Do not include:
     1. Foreign keys. (Relationships handle the links conceptually).
@@ -51,6 +50,12 @@ Convert the requirement analysis into a conceptual ERD with clear entities, rela
     3. Database indexes.
     4. Physical database design decisions.
     5. DBMS-specific types.
+
+- **Naming Rules**:
+    1. Entity names: UPPERCASE singular nouns.
+    2. Attribute names: snake_case.
+    3. Relationship names: implicit through ERD connections only.
+    4. Do not use spaces in entity names.
 
 - **ERD VALIDATION CHECKLIST**: Before finalizing:
     1. Every relationship must connect exactly two entities.
