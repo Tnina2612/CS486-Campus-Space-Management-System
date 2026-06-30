@@ -1,191 +1,200 @@
--- ====================================================================
--- 07-query-design-G11.sql
+-- ============================================================
 -- Query Design — Campus Space Management System
--- DBMS: Microsoft SQL Server
--- ====================================================================
+-- ============================================================
+-- Step 7: Business Intelligence Queries
+-- Target: Microsoft SQL Server (T-SQL)
+-- ============================================================
 
 USE [CampusSpaceManagement];
 GO
 
--- ====================================================================
--- QUERY 1: Upcoming approved bookings per space
--- ====================================================================
--- Business Question:
---   Which spaces have approved or checked-in bookings starting from
---   today onwards, and who are the requesters?
--- Target User(s):
---   Facility staff who need to prepare rooms before sessions.
--- Usefulness:
---   Allows staff to see a daily schedule of which spaces will be used,
---   by whom, and for what purpose, so they can prepare equipment,
---   unlock rooms, and plan cleaning.
-SELECT
-    s.space_code,
-    s.space_name,
-    u.full_name  AS requester_name,
-    u.email      AS requester_email,
-    b.requested_start,
-    b.requested_end,
-    b.purpose,
-    b.expected_participants
-FROM BOOKING b
-INNER JOIN SPACE s ON s.space_code = b.space_code
-INNER JOIN [USER] u ON u.user_id = b.requester_id
-WHERE b.status IN ('approved', 'checked_in')
-  AND b.requested_start >= CAST(GETDATE() AS DATETIME2)
-ORDER BY b.requested_start ASC;
-GO
-
--- ====================================================================
--- QUERY 2: Full booking audit trail (request → approval → session)
--- ====================================================================
--- Business Question:
---   What is the complete lifecycle of every booking from initial
---   request through approval to actual room usage?
--- Target User(s):
---   Facility manager, department administrator — auditing and
---   dispute resolution.
--- Usefulness:
---   Provides a single view linking the booking request, the approval
---   decision, and the physical usage session. Essential for tracing
---   what happened when a discrepancy arises (e.g., a room was approved
---   but never used).
+-- ============================================================
+-- Query 1: Booking History for a Specific Space
+-- ============================================================
+-- Business Question: What is the complete booking history for
+--   a given space, including requester, approval status, and
+--   actual usage session details?
+-- Target User: Facility Staff, Department Administrator
+-- Explanation: Staff need to review a space's past bookings to
+--   identify usage patterns, verify that sessions completed as
+--   expected, and audit check-in/check-out records.
+-- ============================================================
 SELECT
     b.booking_id,
-    requester.full_name       AS requester,
-    s.space_code,
-    s.space_name,
+    b.booking_type,
+    b.status                                          AS booking_status,
+    u.full_name                                       AS requester_name,
+    u.role                                            AS requester_role,
+    b.requested_start_time,
+    b.requested_end_time,
+    b.expected_participants,
     b.purpose,
-    b.requested_start,
-    b.requested_end,
-    b.status                  AS booking_status,
-    reviewer.full_name        AS reviewer,
-    a.decision_time,
-    a.decision_note,
+    a.decision                                        AS approval_decision,
+    a.decision_time                                   AS approval_time,
     a.rejection_reason,
-    staff_in.full_name        AS checked_in_by,
-    us.actual_start_time,
+    staff.full_name                                   AS approved_by,
+    us.actual_start_time                              AS check_in_time,
+    us.actual_end_time                                AS check_out_time,
     us.initial_condition,
-    staff_out.full_name       AS checked_out_by,
-    us.actual_end_time,
     us.final_condition,
     us.usage_notes
-FROM BOOKING b
-INNER JOIN SPACE s ON s.space_code = b.space_code
-INNER JOIN [USER] requester ON requester.user_id = b.requester_id
-LEFT JOIN APPROVAL a ON a.booking_id = b.booking_id
-LEFT JOIN [USER] reviewer ON reviewer.user_id = a.reviewer_id
-LEFT JOIN USAGE_SESSION us ON us.booking_id = b.booking_id
-LEFT JOIN [USER] staff_in ON staff_in.user_id = us.checked_in_by
-LEFT JOIN [USER] staff_out ON staff_out.user_id = us.checked_out_by
-ORDER BY b.created_at DESC;
+FROM dbo.BOOKING b
+INNER JOIN dbo.[USER] u ON u.user_id = b.user_id
+INNER JOIN dbo.SPACE s ON s.space_code = b.space_code
+LEFT JOIN dbo.APPROVAL a ON a.booking_id = b.booking_id
+LEFT JOIN dbo.[USER] staff ON staff.user_id = a.staff_id
+LEFT JOIN dbo.USAGE_SESSION us ON us.booking_id = b.booking_id
+WHERE s.space_code = 'CL-201'
+ORDER BY b.requested_start_time DESC;
 GO
 
--- ====================================================================
--- QUERY 3: Active maintenance issues with space and staff details
--- ====================================================================
--- Business Question:
---   Which spaces currently have unresolved maintenance issues, what
---   is the problem, and who is assigned?
--- Target User(s):
---   Facility manager monitoring workload; facility staff viewing
---   their assignments.
--- Usefulness:
---   Provides a real-time view of all active (reported/in_progress)
---   maintenance records so management can prioritise repairs and
---   communicate space unavailability to booking staff.
-SELECT
-    mr.maintenance_id,
-    s.space_code,
-    s.space_name,
-    s.room_number,
-    s.building,
-    reporter.full_name    AS reported_by,
-    assigned.full_name    AS assigned_to,
-    mr.problem_category,
-    mr.problem_description,
-    mr.start_time,
-    mr.status             AS maintenance_status
-FROM MAINTENANCE_RECORD mr
-INNER JOIN SPACE s ON s.space_code = mr.space_code
-INNER JOIN [USER] reporter ON reporter.user_id = mr.reporter_id
-LEFT JOIN [USER] assigned ON assigned.user_id = mr.assigned_staff_id
-WHERE mr.status IN ('reported', 'in_progress')
-ORDER BY mr.start_time DESC;
-GO
-
--- ====================================================================
--- QUERY 4: No-show booking list
--- ====================================================================
--- Business Question:
---   Which bookings resulted in a no-show, and which users and spaces
---   were involved?
--- Target User(s):
---   Facility staff, facility manager — to identify missed bookings
---   and follow up with requesters.
--- Usefulness:
---   Provides a detailed list of all no-show bookings so the school
---   can track space wastage and inform policy decisions (e.g.,
---   contacting habitual no-show users).
+-- ============================================================
+-- Query 2: Upcoming Approved Bookings (Next 7 Days)
+-- ============================================================
+-- Business Question: Which approved bookings are scheduled
+--   for the next 7 days, and which spaces will be occupied?
+-- Target User: Facility Staff
+-- Explanation: Staff use this to prepare rooms, ensure
+--   equipment availability, and plan daily operations.
+-- ============================================================
 SELECT
     b.booking_id,
-    u.full_name           AS requester_name,
-    u.email               AS requester_email,
-    u.role                AS requester_role,
     s.space_code,
     s.space_name,
-    b.requested_start,
-    b.requested_end,
-    b.purpose,
+    s.building,
+    s.floor,
+    s.room_number,
+    u.full_name                                       AS requester,
+    b.booking_type,
+    b.requested_start_time,
+    b.requested_end_time,
     b.expected_participants,
-    b.created_at          AS request_created_at
-FROM BOOKING b
-INNER JOIN [USER] u ON u.user_id = b.requester_id
-INNER JOIN SPACE s ON s.space_code = b.space_code
-WHERE b.status = 'no_show'
-ORDER BY b.requested_start DESC;
+    b.purpose
+FROM dbo.BOOKING b
+INNER JOIN dbo.SPACE s ON s.space_code = b.space_code
+INNER JOIN dbo.[USER] u ON u.user_id = b.user_id
+WHERE b.status = 'approved'
+  AND b.requested_start_time >= SYSDATETIME()
+  AND b.requested_start_time < DATEADD(DAY, 7, SYSDATETIME())
+ORDER BY b.requested_start_time ASC;
 GO
 
--- ====================================================================
--- QUERY 5: Facility inventory per space (trackable assets +
---          non-trackable catalog quantities)
--- ====================================================================
--- Business Question:
---   What facilities are installed in each space, broken down by
---   trackable assets (individual tagged items) and non-trackable
---   quantities?
--- Target User(s):
---   Facility manager, facility staff conducting equipment audits.
--- Usefulness:
---   Implements the "Catalog vs. Asset Hybrid Pattern" by combining
---   both inventory views in one report. Staff can see both how many
---   whiteboards (non-trackable) and which individual computers
---   (trackable) exist per space.
+-- ============================================================
+-- Query 3: Space Utilization Rate (Past 30 Days)
+-- ============================================================
+-- Business Question: What percentage of total available time
+--   was each space actually used over the past 30 days?
+-- Target User: Facility Manager
+-- Explanation: Helps management identify underutilized spaces
+--   and make data-driven decisions about space allocation,
+--   consolidation, or re-purposing.
+-- ============================================================
+WITH space_hours AS (
+    SELECT
+        s.space_code,
+        s.space_name,
+        s.capacity,
+        SUM(DATEDIFF(HOUR,
+            CASE WHEN b.requested_start_time >= DATEADD(DAY, -30, SYSDATETIME())
+                 THEN b.requested_start_time
+                 ELSE DATEADD(DAY, -30, SYSDATETIME())
+            END,
+            CASE WHEN b.actual_end_time IS NOT NULL
+                 THEN b.actual_end_time
+                 ELSE b.requested_end_time
+            END
+        )) AS booked_hours
+    FROM dbo.SPACE s
+    LEFT JOIN dbo.BOOKING b ON b.space_code = s.space_code
+        AND b.status IN ('completed', 'checked_in', 'approved')
+        AND b.requested_end_time > DATEADD(DAY, -30, SYSDATETIME())
+    GROUP BY s.space_code, s.space_name, s.capacity
+)
 SELECT
+    space_code,
+    space_name,
+    capacity,
+    ISNULL(booked_hours, 0)                           AS booked_hours,
+    720                                               AS total_available_hours,
+    ROUND(100.0 * ISNULL(booked_hours, 0) / 720.0, 1) AS utilization_pct,
+    CASE
+        WHEN ROUND(100.0 * ISNULL(booked_hours, 0) / 720.0, 1) < 30.0 THEN 'Underutilized'
+        WHEN ROUND(100.0 * ISNULL(booked_hours, 0) / 720.0, 1) < 60.0 THEN 'Moderate'
+        ELSE 'Well Utilized'
+    END AS utilization_category
+FROM space_hours
+ORDER BY utilization_pct DESC;
+GO
+
+-- ============================================================
+-- Query 4: No-Show Booking Report
+-- ============================================================
+-- Business Question: Which bookings resulted in no-shows,
+--   who made them, and which space was reserved?
+-- Target User: Facility Staff, Department Administrator
+-- Explanation: Identifying no-show patterns helps the school
+--   enforce booking policies and potentially penalize
+--   repeat offenders to ensure fair space access.
+-- ============================================================
+SELECT
+    b.booking_id,
+    u.full_name                                       AS requester_name,
+    u.email                                           AS requester_email,
+    u.department                                      AS requester_department,
     s.space_code,
     s.space_name,
-    fc.facility_name,
-    fc.is_trackable,
-    CASE
-        WHEN fc.is_trackable = 0 THEN CAST(sf.quantity AS NVARCHAR(10))
-        ELSE NULL
-    END AS non_trackable_quantity,
-    CASE
-        WHEN fc.is_trackable = 1 THEN fa.asset_tag
-        ELSE NULL
-    END AS trackable_asset_tag,
-    CASE
-        WHEN fc.is_trackable = 1 THEN fa.status
-        ELSE NULL
-    END AS asset_status
-FROM SPACE s
-INNER JOIN SPACE_FACILITY sf ON sf.space_code = s.space_code
-INNER JOIN FACILITY_CATALOG fc ON fc.catalog_id = sf.catalog_id
-LEFT JOIN FACILITY_ASSET fa ON fa.catalog_id = sf.catalog_id
-    AND fa.space_code = s.space_code
-ORDER BY s.space_code, fc.facility_name, fa.asset_tag;
+    b.booking_type,
+    b.requested_start_time,
+    b.requested_end_time,
+    b.expected_participants,
+    b.purpose,
+    us.checked_in_by,
+    us.actual_start_time                              AS attempted_check_in_time,
+    us.usage_notes
+FROM dbo.BOOKING b
+INNER JOIN dbo.[USER] u ON u.user_id = b.user_id
+INNER JOIN dbo.SPACE s ON s.space_code = b.space_code
+LEFT JOIN dbo.USAGE_SESSION us ON us.booking_id = b.booking_id
+WHERE b.status = 'no_show'
+ORDER BY b.requested_start_time DESC;
 GO
 
--- ====================================================================
--- END OF QUERY DESIGN
--- ====================================================================
+-- ============================================================
+-- Query 5: Active Maintenance Overview
+-- ============================================================
+-- Business Question: Which spaces are currently under active
+--   maintenance, what is the problem, who is assigned, and
+--   how long has the space been unavailable?
+-- Target User: Facility Manager, Facility Staff
+-- Explanation: Provides a real-time snapshot of all ongoing
+--   maintenance work so managers can prioritize resources
+--   and estimate when spaces will become available again.
+-- ============================================================
+SELECT
+    m.maintenance_id,
+    s.space_code,
+    s.space_name,
+    s.building,
+    s.floor,
+    s.room_number,
+    s.capacity,
+    m.problem_type,
+    m.problem_description,
+    reporter.full_name                                AS reported_by,
+    assigned.full_name                                AS assigned_to,
+    m.start_time,
+    DATEDIFF(DAY, m.start_time, SYSDATETIME())        AS days_since_start,
+    m.status,
+    m.result_note
+FROM dbo.MAINTENANCE m
+INNER JOIN dbo.SPACE s ON s.space_code = m.space_code
+INNER JOIN dbo.[USER] reporter ON reporter.user_id = m.reporter_id
+LEFT JOIN dbo.[USER] assigned ON assigned.user_id = m.assigned_staff_id
+WHERE m.status IN ('reported', 'in_progress')
+ORDER BY
+    CASE m.status
+        WHEN 'reported' THEN 1
+        WHEN 'in_progress' THEN 2
+    END,
+    m.start_time ASC;
+GO

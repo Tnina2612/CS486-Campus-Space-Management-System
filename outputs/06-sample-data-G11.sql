@@ -1,354 +1,332 @@
--- ====================================================================
--- 06-sample-data-G11.sql
--- Sample Data — Campus Space Management System
--- DBMS: Microsoft SQL Server
--- ====================================================================
--- Insertion order follows FK dependencies:
---   Phase 1: Base entities (USER, SPACE, FACILITY_CATALOG)
---   Phase 2a: FACILITY_ASSET (trackable assets — inserted BEFORE
---             SPACE_FACILITY so the trigger sees matching counts)
---   Phase 2b: SPACE_FACILITY (associative with quantities)
---   Phase 3:  Transactional entities (BOOKING, APPROVAL,
---             USAGE_SESSION, MAINTENANCE_RECORD)
--- ====================================================================
+-- ============================================================
+-- Sample Data Preparation — Campus Space Management System
+-- ============================================================
+-- Step 6: Sample Data
+-- Target: Microsoft SQL Server (T-SQL)
+-- ============================================================
 
 USE [CampusSpaceManagement];
 GO
 
--- ====================================================================
--- PHASE 1: BASE ENTITIES
--- ====================================================================
+-- ============================================================
+-- PHASE 1: Base Entities
+-- ============================================================
 
--- ---------------------------------------------------------------
--- 1. USERS (all 6 roles covered)
--- ---------------------------------------------------------------
--- [Testing: BR9 - Unique email per user]
-INSERT INTO [USER] (full_name, email, phone, role, department, account_status)
+-- -------------------------------------------------------
+-- USERS — one per role + extras for testing
+-- -------------------------------------------------------
+INSERT INTO dbo.[USER] (user_id, full_name, email, phone_number, role, department, account_status)
 VALUES
-    ('Emily Davis',     'emily.davis@university.edu', '+1-555-0101', 'lecturer',                 'Computer Science', 'active'),
-    ('James Chen',      'james.chen@university.edu',  '+1-555-0102', 'student',                  'Computer Science', 'active'),
-    ('Sarah Ahmed',     'sarah.ahmed@university.edu', '+1-555-0103', 'teaching_assistant',       'Computer Science', 'active'),
-    ('Michael Brown',   'michael.brown@university.edu','+1-555-0104', 'facility_staff',           'Facility Services','active'),
-    ('Anna Kowalski',   'anna.kowalski@university.edu','+1-555-0105', 'department_administrator', 'Computer Science', 'active'),
-    ('Robert Taylor',   'robert.taylor@university.edu','+1-555-0106', 'facility_manager',         'Facility Services','active'),
-    ('Lisa Wang',       'lisa.wang@university.edu',   '+1-555-0107', 'student',                  'Computer Science', 'active'),
-    ('David Kim',       'david.kim@university.edu',   '+1-555-0108', 'lecturer',                 'Computer Science', 'active'),
-    ('Maria Garcia',    'maria.garcia@university.edu','+1-555-0109', 'facility_staff',           'Facility Services','active');
+    ('U001', 'Emily Davis',      'emily.davis@university.edu', '+1-555-0101', 'student',                  'Computer Science', 'active'),
+    ('U002', 'James Chen',       'james.chen@university.edu', '+1-555-0102', 'lecturer',                  'Computer Science', 'active'),
+    ('U003', 'Sarah Kim',        'sarah.kim@university.edu',  '+1-555-0103', 'teaching_assistant',        'Computer Science', 'active'),
+    ('U004', 'Mike O''Brien',    'mike.obrien@university.edu','+1-555-0104', 'facility_staff',            'Facilities',       'active'),
+    ('U005', 'Dr. Lisa Park',    'lisa.park@university.edu',  '+1-555-0105', 'department_administrator',  'Computer Science', 'active'),
+    ('U006', 'Robert Tanaka',    'robert.tanaka@university.edu','+1-555-0106','facility_manager',          'Facilities',       'active'),
+    ('U007', 'Anna Schmidt',     'anna.schmidt@university.edu','+1-555-0107', 'student',                  'Computer Science', 'active'),
+    ('U008', 'Carlos Garcia',    'carlos.garcia@university.edu','+1-555-0108','lecturer',                  'Computer Science', 'active'),
+    ('U009', 'Inactive User',    'inactive@university.edu',   NULL,           'student',                  'Computer Science', 'inactive'),
+    ('U010', 'Suspended User',   'suspended@university.edu',  NULL,           'student',                  'Computer Science', 'suspended');
 GO
--- User IDs: Emily=1, James=2, Sarah=3, Michael=4, Anna=5, Robert=6, Lisa=7, David=8, Maria=9
 
--- ---------------------------------------------------------------
--- 2. SPACES (all 5 status values covered)
--- ---------------------------------------------------------------
-INSERT INTO SPACE (space_code, space_name, space_type, building, floor, room_number, capacity, current_status, usage_policy)
+-- -------------------------------------------------------
+-- SPACES — cover all current_status values
+-- -------------------------------------------------------
+INSERT INTO dbo.SPACE (space_code, space_name, space_type, building, floor, room_number, capacity, current_status, usage_policy)
 VALUES
-    ('LT001', 'Alan Turing Auditorium',  'auditorium',   'A', 1, 'A101', 200, 'available',          'Lectures, seminars, exams only.'),
-    ('CR101', 'Computer Lab 101',        'computer_lab', 'B', 1, 'B101',  40, 'available',          'Computer science classes and labs.'),
-    ('CR102', 'Project Lab 102',         'project_lab',  'B', 2, 'B201',  25, 'available',          'Student projects and research.'),
-    ('MR201', 'Meeting Room 201',        'meeting_room', 'A', 2, 'A202',  15, 'under_maintenance',   'Staff meetings only.'),
-    ('CR103', 'Classroom 103',           'classroom',    'B', 1, 'B103',  50, 'in_use',              'General teaching and exams.'),
-    ('WS001', 'Student Workspace',       'workspace',    'C', 1, 'C101',  30, 'available',          'Open student workspace.'),
-    ('CR104', 'Classroom 104',           'classroom',    'B', 2, 'B201',  45, 'temporarily_closed',  'Currently closed for renovation.'),
-    ('MR202', 'Meeting Room 202',        'meeting_room', 'A', 3, 'A301',  10, 'retired',             'No longer in service.');
+    ('AUD-101', 'Alan Turing Auditorium',   'auditorium',          'Main Hall',    1, '101', 200, 'available',          'Lectures, seminars, and examinations only.'),
+    ('CL-201',  'Ada Lovelace Classroom',   'classroom',           'CS Building',  2, '201', 40,  'available',          'Teaching, tutorials, and workshops.'),
+    ('LAB-B101','Innovation Lab',           'computer_laboratory', 'CS Building',  1, 'B101',30,  'available',          'Programming labs and research activities.'),
+    ('LAB-B102','Robotics Lab',             'project_laboratory',  'CS Building',  1, 'B102',20,  'under_maintenance',  'Project work — currently under maintenance.'),
+    ('MT-301',  'Collaboration Hub',        'meeting_room',        'Main Hall',    3, '301', 12,  'temporarily_closed', 'Meetings and group discussions — closed for renovation.'),
+    ('WS-001',  'Creative Workspace',       'student_workspace',   'CS Building',  2, '001', 15,  'available',          'Student project work and study groups.'),
+    ('CL-202',  'Grace Hopper Classroom',   'classroom',           'CS Building',  2, '202', 35,  'retired',            'Decommissioned — no longer used.');
 GO
--- Note: MR201 = under_maintenance, CR103 = in_use, CR104 = temporarily_closed, MR202 = retired
 
--- ---------------------------------------------------------------
--- 3. FACILITY_CATALOG (mix of trackable and non-trackable)
--- ---------------------------------------------------------------
-INSERT INTO FACILITY_CATALOG (facility_name, description, is_trackable)
+-- -------------------------------------------------------
+-- FACILITY_CATALOG
+-- -------------------------------------------------------
+INSERT INTO dbo.FACILITY_CATALOG (catalog_id, name, description, is_trackable)
 VALUES
-    ('Projector',              'HD multimedia projector',               1),
-    ('Whiteboard',             'Standard whiteboard with markers',      0),
-    ('Computer',               'Desktop computer workstation',          1),
-    ('Air Conditioner',        'Split-type air conditioning unit',      0),
-    ('Microphone',             'Wireless handheld microphone',          0),
-    ('Livestreaming Equipment','Professional livestream camera kit',    1);
+    ('CAT-PROJ',       'Projector',          'Standard HD projector',                           0),
+    ('CAT-WHITE',      'Whiteboard',         'Mounted whiteboard with markers',                 0),
+    ('CAT-COMP',       'Computer',           'Desktop workstation',                             1),
+    ('CAT-AC',         'Air Conditioner',    'Split-system air conditioning unit',              0),
+    ('CAT-MIC',        'Microphone',         'Wireless microphone system',                      0),
+    ('CAT-LIVESTREAM', 'Livestream Equipment','Camera, encoder, and streaming hardware',         1);
 GO
--- Catalog IDs: Projector=1, Whiteboard=2, Computer=3, AC=4, Mic=5, Livestream=6
 
--- ====================================================================
--- PHASE 2a: FACILITY_ASSET (trackable assets — inserted first for
---            SPACE_FACILITY trigger validation)
--- ====================================================================
+-- ============================================================
+-- PHASE 2: Associative and Child Entities
+-- ============================================================
 
--- [Testing: BR6 - Trackable vs non-trackable]
--- [Testing: BR7 - Unique asset tag]
-
--- Projectors (catalog_id=1) — one per space that has one
-INSERT INTO FACILITY_ASSET (catalog_id, space_code, asset_tag, status)
+-- -------------------------------------------------------
+-- SPACE_FACILITY — quantity for non-trackable items
+-- -------------------------------------------------------
+INSERT INTO dbo.SPACE_FACILITY (space_code, catalog_id, quantity)
 VALUES
-    (1, 'LT001', 'LT001-PROJ-001', 'available'),
-    (1, 'CR101', 'CR101-PROJ-001', 'available'),
-    (1, 'CR102', 'CR102-PROJ-001', 'available'),
-    (1, 'MR201', 'MR201-PROJ-001', 'under_maintenance'),
-    (1, 'CR103', 'CR103-PROJ-001', 'available'),
-    (1, 'CR104', 'CR104-PROJ-001', 'available');
+    ('AUD-101', 'CAT-PROJ', 2),
+    ('AUD-101', 'CAT-AC',   4),
+    ('AUD-101', 'CAT-MIC',  3),
+    ('CL-201',  'CAT-PROJ', 1),
+    ('CL-201',  'CAT-WHITE',1),
+    ('LAB-B101','CAT-COMP', 25),
+    ('LAB-B101','CAT-AC',   2),
+    ('LAB-B102','CAT-COMP', 10),
+    ('LAB-B102','CAT-AC',   1),
+    ('WS-001',  'CAT-WHITE',1),
+    ('MT-301',  'CAT-PROJ', 1),
+    ('MT-301',  'CAT-AC',   2),
+    ('CL-202',  'CAT-PROJ', 1);
 GO
 
--- Computers (catalog_id=3) — 40 in CR101, 15 in CR102
-DECLARE @i INT = 1;
-WHILE @i <= 40
-BEGIN
-    INSERT INTO FACILITY_ASSET (catalog_id, space_code, asset_tag, status)
-    VALUES (3, 'CR101', 'CR101-COMP-' + RIGHT('00' + CAST(@i AS VARCHAR(3)), 3), 'available');
-    SET @i = @i + 1;
-END;
-GO
-
-DECLARE @j INT = 1;
-WHILE @j <= 15
-BEGIN
-    INSERT INTO FACILITY_ASSET (catalog_id, space_code, asset_tag, status)
-    VALUES (3, 'CR102', 'CR102-COMP-' + RIGHT('00' + CAST(@j AS VARCHAR(3)), 3), 'available');
-    SET @j = @j + 1;
-END;
-GO
-
--- Livestreaming Equipment (catalog_id=6) — 1 in LT001
-INSERT INTO FACILITY_ASSET (catalog_id, space_code, asset_tag, status)
-VALUES (6, 'LT001', 'LT001-LIVE-001', 'available');
-GO
-
--- ====================================================================
--- PHASE 2b: SPACE_FACILITY (associative — quantities must match
---            FACILITY_ASSET counts for trackable items)
--- ====================================================================
-
--- [Testing: BR6 - Trackable vs non-trackable quantity management]
-
--- LT001: Projector(1), Whiteboard(2), Microphone(2), AC(2), Livestream(1)
-INSERT INTO SPACE_FACILITY (space_code, catalog_id, quantity)
+-- -------------------------------------------------------
+-- FACILITY_ASSET — trackable assets (computers, livestream gear)
+-- -------------------------------------------------------
+-- Computers in Innovation Lab (LAB-B101)
+INSERT INTO dbo.FACILITY_ASSET (catalog_id, space_code, asset_tag, status)
 VALUES
-    ('LT001', 1, 1),  -- Projector (trackable) — 1 asset
-    ('LT001', 2, 2),  -- Whiteboard
-    ('LT001', 5, 2),  -- Microphone
-    ('LT001', 4, 2),  -- Air Conditioner
-    ('LT001', 6, 1);  -- Livestreaming (trackable) — 1 asset
+    ('CAT-COMP', 'LAB-B101', 'COMP-001', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-002', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-003', 'under_repair'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-004', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-005', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-006', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-007', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-008', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-009', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-010', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-011', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-012', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-013', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-014', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-015', 'damaged'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-016', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-017', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-018', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-019', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-020', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-021', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-022', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-023', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-024', 'working'),
+    ('CAT-COMP', 'LAB-B101', 'COMP-025', 'working');
 GO
 
--- CR101: Projector(1), Whiteboard(1), Computer(40), AC(2)
-INSERT INTO SPACE_FACILITY (space_code, catalog_id, quantity)
+-- Computers in Robotics Lab (LAB-B102) — space is under maintenance
+INSERT INTO dbo.FACILITY_ASSET (catalog_id, space_code, asset_tag, status)
 VALUES
-    ('CR101', 1, 1),   -- Projector (trackable) — 1 asset
-    ('CR101', 2, 1),   -- Whiteboard
-    ('CR101', 3, 40),  -- Computer (trackable) — 40 assets
-    ('CR101', 4, 2);   -- Air Conditioner
+    ('CAT-COMP', 'LAB-B102', 'COMP-026', 'working'),
+    ('CAT-COMP', 'LAB-B102', 'COMP-027', 'working'),
+    ('CAT-COMP', 'LAB-B102', 'COMP-028', 'damaged'),
+    ('CAT-COMP', 'LAB-B102', 'COMP-029', 'working'),
+    ('CAT-COMP', 'LAB-B102', 'COMP-030', 'working');
 GO
 
--- CR102: Projector(1), Whiteboard(1), Computer(15), AC(1)
-INSERT INTO SPACE_FACILITY (space_code, catalog_id, quantity)
+-- Livestream equipment in Auditorium (AUD-101)
+INSERT INTO dbo.FACILITY_ASSET (catalog_id, space_code, asset_tag, status)
 VALUES
-    ('CR102', 1, 1),   -- Projector (trackable) — 1 asset
-    ('CR102', 2, 1),   -- Whiteboard
-    ('CR102', 3, 15),  -- Computer (trackable) — 15 assets
-    ('CR102', 4, 1);   -- Air Conditioner
+    ('CAT-LIVESTREAM', 'AUD-101', 'LIVE-001', 'working'),
+    ('CAT-LIVESTREAM', 'AUD-101', 'LIVE-002', 'working');
 GO
 
--- MR201: Projector(1), Whiteboard(2), AC(1)
-INSERT INTO SPACE_FACILITY (space_code, catalog_id, quantity)
-VALUES
-    ('MR201', 1, 1),  -- Projector (trackable) — 1 asset (under maintenance)
-    ('MR201', 2, 2),  -- Whiteboard
-    ('MR201', 4, 1);  -- Air Conditioner
+-- ============================================================
+-- PHASE 3: Transactional Entities (Bookings, Approvals, Sessions, Maintenance)
+-- ============================================================
+
+-- -------------------------------------------------------
+-- BOOKINGS — Covering all status values and business rules
+-- -------------------------------------------------------
+
+-- [BR-07 / BR-08: Check-in and Check-out Lifecycle]
+-- Booking 1: Approved, checked in, and completed (happy path)
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U002', 'CL-201', '2026-06-10 08:00:00', '2026-06-10 10:00:00', 'Database Systems Lecture — Week 1', 35, 'lecture', 'completed');
 GO
 
--- CR103: Projector(1), Whiteboard(1), AC(2)
-INSERT INTO SPACE_FACILITY (space_code, catalog_id, quantity)
-VALUES
-    ('CR103', 1, 1),  -- Projector (trackable) — 1 asset
-    ('CR103', 2, 1),  -- Whiteboard
-    ('CR103', 4, 2);  -- Air Conditioner
+-- [BR-05 / BR-06: Approval required; rejection reason stored]
+-- Booking 2: Pending — awaiting approval
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U001', 'LAB-B101', '2026-06-11 14:00:00', '2026-06-11 17:00:00', 'Python Workshop for beginners', 20, 'workshop', 'pending');
 GO
 
--- WS001: Whiteboard(2), AC(1)
-INSERT INTO SPACE_FACILITY (space_code, catalog_id, quantity)
-VALUES
-    ('WS001', 2, 2),  -- Whiteboard
-    ('WS001', 4, 1);  -- Air Conditioner
+-- [BR-02: Overlap prevention — rejected due to time conflict with Booking 1]
+-- Booking 3: Rejected because it overlaps with Booking 1 in CL-201
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U008', 'CL-201', '2026-06-10 09:00:00', '2026-06-10 11:00:00', 'AI Seminar — overlapping with existing booking', 30, 'seminar', 'rejected');
 GO
 
--- CR104: Projector(1), Whiteboard(1), AC(1)
-INSERT INTO SPACE_FACILITY (space_code, catalog_id, quantity)
-VALUES
-    ('CR104', 1, 1),  -- Projector (trackable) — 1 asset
-    ('CR104', 2, 1),  -- Whiteboard
-    ('CR104', 4, 1);  -- Air Conditioner
+-- [BR-03: Unavailable space blocked]
+-- Booking 4: Rejected — space LAB-B102 is under maintenance
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U002', 'LAB-B102', '2026-06-12 10:00:00', '2026-06-12 12:00:00', 'Robotics practical session', 15, 'examination', 'rejected');
 GO
 
--- ====================================================================
--- PHASE 3: TRANSACTIONAL ENTITIES
--- ====================================================================
-
--- ---------------------------------------------------------------
--- 4. BOOKING + APPROVAL + USAGE_SESSION
--- ---------------------------------------------------------------
-
----------------------------------------------------------------
--- SCENARIO A: Full lifecycle — pending → approved → checked_in
---             → completed  (happy path)
--- [Testing: BR3 - Status lifecycle]
--- [Testing: BR4 - 1-to-1 booking ↔ approval]
--- [Testing: BR5 - 1-to-1 booking ↔ usage session]
--- [Testing: BR11 - Time validity (start < end)]
----------------------------------------------------------------
-INSERT INTO BOOKING (requester_id, space_code, requested_start, requested_end, purpose, expected_participants, status, created_at)
-VALUES (1, 'CR103', '2026-07-01 09:00:00', '2026-07-01 11:00:00', 'lecture', 45, 'approved', '2026-06-20 08:00:00');
--- booking_id = 1
-
-INSERT INTO APPROVAL (booking_id, reviewer_id, decision_time, decision_note, rejection_reason)
-VALUES (1, 4, '2026-06-21 10:00:00', 'Approved for regular lecture slot.', NULL);
-
-INSERT INTO USAGE_SESSION (booking_id, checked_in_by, actual_start_time, initial_condition, checked_out_by, actual_end_time, final_condition, usage_notes)
-VALUES (1, 4, '2026-07-01 09:05:00', 'Clean, all equipment functional.', 4, '2026-07-01 11:10:00', 'Clean, projector turned off.', 'Lecture ended on time.');
+-- [BR-03: Temporarily closed space blocked]
+-- Booking 5: Rejected — space MT-301 is temporarily closed
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U007', 'MT-301', '2026-06-15 13:00:00', '2026-06-15 15:00:00', 'Student project meeting', 10, 'meeting', 'rejected');
 GO
 
----------------------------------------------------------------
--- SCENARIO B: Rejected booking due to time overlap
--- [Testing: BR1 - No overlapping approved bookings for same space]
--- [Testing: BR4 - Booking ↔ approval with rejection_reason]
----------------------------------------------------------------
-INSERT INTO BOOKING (requester_id, space_code, requested_start, requested_end, purpose, expected_participants, status, created_at)
-VALUES (2, 'CR103', '2026-07-01 09:30:00', '2026-07-01 11:30:00', 'examination', 30, 'rejected', '2026-06-22 14:00:00');
--- booking_id = 2 — overlaps with approved booking 1 in CR103
-
-INSERT INTO APPROVAL (booking_id, reviewer_id, decision_time, decision_note, rejection_reason)
-VALUES (2, 4, '2026-06-23 09:00:00', NULL, 'Time conflict with an existing approved lecture booking (ID=1) in the same space.');
+-- [BR-03: Retired space blocked]
+-- Booking 6: Rejected — space CL-202 is retired
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U008', 'CL-202', '2026-06-16 09:00:00', '2026-06-16 11:00:00', 'Legacy course review', 25, 'lecture', 'rejected');
 GO
 
----------------------------------------------------------------
--- SCENARIO C: Pending booking (awaiting approval)
--- [Testing: BR3 - pending status]
----------------------------------------------------------------
-INSERT INTO BOOKING (requester_id, space_code, requested_start, requested_end, purpose, expected_participants, status, created_at)
-VALUES (7, 'LT001', '2026-07-05 14:00:00', '2026-07-05 17:00:00', 'seminar', 150, 'pending', '2026-06-25 11:00:00');
--- booking_id = 3
+-- [BR-07 / BR-08: Full check-in and check-out lifecycle]
+-- Booking 7: Checked in and completed with session data
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U002', 'AUD-101', '2026-06-08 09:00:00', '2026-06-08 12:00:00', 'CS486 Final Examination', 150, 'examination', 'completed');
 GO
 
----------------------------------------------------------------
--- SCENARIO D: Cancelled booking (requester cancelled)
--- [Testing: BR3 - cancelled status]
----------------------------------------------------------------
-INSERT INTO BOOKING (requester_id, space_code, requested_start, requested_end, purpose, expected_participants, status, created_at)
-VALUES (2, 'WS001', '2026-06-15 10:00:00', '2026-06-15 12:00:00', 'student_activity', 20, 'cancelled', '2026-06-10 09:00:00');
--- booking_id = 4
+-- Booking 8: Another completed booking
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U002', 'CL-201', '2026-06-09 13:00:00', '2026-06-09 15:00:00', 'Database Systems Lab — Section 2', 30, 'lecture', 'completed');
 GO
 
----------------------------------------------------------------
--- SCENARIO E: No-show booking
--- [Testing: BR3 - no-show status]
----------------------------------------------------------------
-INSERT INTO BOOKING (requester_id, space_code, requested_start, requested_end, purpose, expected_participants, status, created_at)
-VALUES (7, 'CR101', '2026-06-20 13:00:00', '2026-06-20 15:00:00', 'workshop', 25, 'no_show', '2026-06-15 10:00:00');
--- booking_id = 5
+-- [BR-04: Cancelled booking]
+-- Booking 9: Cancelled by requester
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U001', 'WS-001', '2026-06-14 10:00:00', '2026-06-14 13:00:00', 'Group study session — cancelled', 8, 'student_activity', 'cancelled');
 GO
 
----------------------------------------------------------------
--- SCENARIO F: Checked-in but not yet checked out
--- [Testing: BR5 - 1-to-1 usage session (partial)]
----------------------------------------------------------------
-INSERT INTO BOOKING (requester_id, space_code, requested_start, requested_end, purpose, expected_participants, status, created_at)
-VALUES (3, 'CR102', '2026-07-02 10:00:00', '2026-07-02 12:00:00', 'lecture', 20, 'checked_in', '2026-06-28 08:30:00');
--- booking_id = 6
-
-INSERT INTO APPROVAL (booking_id, reviewer_id, decision_time, decision_note, rejection_reason)
-VALUES (6, 4, '2026-06-29 09:00:00', 'Approved for project lab session.', NULL);
-
-INSERT INTO USAGE_SESSION (booking_id, checked_in_by, actual_start_time, initial_condition, checked_out_by, actual_end_time, final_condition, usage_notes)
-VALUES (6, 4, '2026-07-02 10:10:00', 'Computers running, room tidy.', NULL, NULL, NULL, NULL);
+-- [BR-04: No-show booking]
+-- Booking 10: No-show — requester never checked in
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U007', 'CL-201', '2026-06-12 08:00:00', '2026-06-12 10:00:00', 'Study group reservation', 15, 'student_activity', 'no_show');
 GO
 
----------------------------------------------------------------
--- SCENARIO G: Booking rejected for space under maintenance
--- [Testing: BR2 - Unavailable spaces cannot be booked]
--- [Testing: BR8 - Maintenance blocks booking]
----------------------------------------------------------------
-INSERT INTO BOOKING (requester_id, space_code, requested_start, requested_end, purpose, expected_participants, status, created_at)
-VALUES (8, 'MR201', '2026-07-10 09:00:00', '2026-07-10 11:00:00', 'meeting', 10, 'rejected', '2026-07-01 08:00:00');
--- booking_id = 7 — MR201 is under_maintenance
-
-INSERT INTO APPROVAL (booking_id, reviewer_id, decision_time, decision_note, rejection_reason)
-VALUES (7, 6, '2026-07-01 10:00:00', NULL, 'Space is currently under maintenance. Cannot approve booking.');
+-- Booking 11: Approved but not yet checked in
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U003', 'LAB-B101', '2026-06-20 14:00:00', '2026-06-20 17:00:00', 'TA office hours and tutoring', 10, 'meeting', 'approved');
 GO
 
----------------------------------------------------------------
--- SCENARIO H: Capacity at limit — expected_participants = 40
---             for CR101 (capacity=40)
--- [Testing: BR10 - Capacity check (application-level)]
----------------------------------------------------------------
-INSERT INTO BOOKING (requester_id, space_code, requested_start, requested_end, purpose, expected_participants, status, created_at)
-VALUES (1, 'CR101', '2026-07-03 08:00:00', '2026-07-03 10:00:00', 'examination', 40, 'approved', '2026-06-30 07:00:00');
--- booking_id = 8
-
-INSERT INTO APPROVAL (booking_id, reviewer_id, decision_time, decision_note, rejection_reason)
-VALUES (8, 4, '2026-07-01 09:00:00', 'Approved — capacity matches participant count.', NULL);
+-- Booking 12: Currently checked in
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U001', 'WS-001', '2026-06-30 09:00:00', '2026-06-30 12:00:00', 'Capstone project work session', 6, 'student_activity', 'checked_in');
 GO
 
----------------------------------------------------------------
--- SCENARIO I: Historical booking (completed in the past)
--- [Testing: BR12 - History preservation]
----------------------------------------------------------------
-INSERT INTO BOOKING (requester_id, space_code, requested_start, requested_end, purpose, expected_participants, status, created_at)
-VALUES (8, 'LT001', '2026-06-01 09:00:00', '2026-06-01 12:00:00', 'lecture', 180, 'completed', '2026-05-20 08:00:00');
--- booking_id = 9
-
-INSERT INTO APPROVAL (booking_id, reviewer_id, decision_time, decision_note, rejection_reason)
-VALUES (9, 4, '2026-05-21 10:00:00', 'Approved for guest lecture.', NULL);
-
-INSERT INTO USAGE_SESSION (booking_id, checked_in_by, actual_start_time, initial_condition, checked_out_by, actual_end_time, final_condition, usage_notes)
-VALUES (9, 9, '2026-06-01 09:00:00', 'Auditorium clean, AV checked.', 9, '2026-06-01 12:15:00', 'All equipment returned.', 'Guest lecture by industry speaker.');
+-- Booking 13: Another pending booking
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U008', 'AUD-101', '2026-07-01 10:00:00', '2026-07-01 12:00:00', 'Guest lecture on AI Ethics', 180, 'lecture', 'pending');
 GO
 
----------------------------------------------------------------
--- SCENARIO J: Admin event booking
--- [Testing: All purpose values covered — administrative_event]
----------------------------------------------------------------
-INSERT INTO BOOKING (requester_id, space_code, requested_start, requested_end, purpose, expected_participants, status, created_at)
-VALUES (5, 'MR201', '2026-08-01 09:00:00', '2026-08-01 11:00:00', 'administrative_event', 10, 'pending', '2026-07-25 08:00:00');
--- booking_id = 10
+-- Booking 14: Administrative event
+INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+VALUES ('U005', 'MT-301', '2026-07-05 09:00:00', '2026-07-05 11:00:00', 'Department staff meeting — closed room', 10, 'administrative_event', 'pending');
 GO
 
----------------------------------------------------------------
--- SCENARIO K: Booking for temporarily closed space (rejected)
--- [Testing: BR2 - Temporarily closed space cannot be booked]
----------------------------------------------------------------
-INSERT INTO BOOKING (requester_id, space_code, requested_start, requested_end, purpose, expected_participants, status, created_at)
-VALUES (2, 'CR104', '2026-08-15 09:00:00', '2026-08-15 11:00:00', 'workshop', 30, 'rejected', '2026-08-01 08:00:00');
--- booking_id = 11 — CR104 is temporarily_closed
+-- -------------------------------------------------------
+-- APPROVALS — decisions on bookings
+-- -------------------------------------------------------
 
-INSERT INTO APPROVAL (booking_id, reviewer_id, decision_time, decision_note, rejection_reason)
-VALUES (11, 4, '2026-08-02 09:00:00', NULL, 'Space is temporarily closed for renovation.');
+-- [BR-05: Approval with staff and decision time]
+-- Approval for Booking 1 (completed booking — was approved)
+INSERT INTO dbo.APPROVAL (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason)
+VALUES (1, 'U004', 'approved', '2026-06-09 14:30:00', 'Approved for lecture as scheduled.', NULL);
 GO
 
--- ====================================================================
--- 5. MAINTENANCE_RECORDS
--- ====================================================================
-
--- [Testing: BR8 - Maintenance blocks booking]
--- Active maintenance on MR201 (currently in_progress)
-INSERT INTO MAINTENANCE_RECORD (space_code, reporter_id, assigned_staff_id, problem_description, problem_category, start_time, completion_time, status, result_note)
-VALUES
-    ('MR201', 1, 4, 'Projector lamp burnt out and air conditioner not cooling.', 'ac_failure', '2026-06-15 08:00:00', NULL, 'in_progress', NULL);
+-- [BR-06: Rejection with reason — overlap with Booking 1]
+INSERT INTO dbo.APPROVAL (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason)
+VALUES (3, 'U004', 'rejected', '2026-06-09 15:00:00', 'Time conflict with existing approved booking.', 'Requested time overlaps with Booking #1 in CL-201 (08:00–10:00).');
 GO
 
--- Completed maintenance record on CR103 (historical)
-INSERT INTO MAINTENANCE_RECORD (space_code, reporter_id, assigned_staff_id, problem_description, problem_category, start_time, completion_time, status, result_note)
-VALUES
-    ('CR103', 8, 9, 'Network ports not working at 3 workstations.', 'network', '2026-05-10 09:00:00', '2026-05-12 16:00:00', 'completed', 'Replaced faulty network switch. All ports functional.');
+-- [BR-03: Rejection — space under maintenance]
+INSERT INTO dbo.APPROVAL (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason)
+VALUES (4, 'U006', 'rejected', '2026-06-11 09:00:00', 'Space is currently under maintenance.', 'Robotics Lab (LAB-B102) is under maintenance until further notice.');
 GO
 
--- Reported maintenance on projector in MR201 (not yet assigned)
-INSERT INTO MAINTENANCE_RECORD (space_code, reporter_id, assigned_staff_id, problem_description, problem_category, start_time, completion_time, status, result_note)
-VALUES
-    ('MR201', 1, NULL, 'Projector image is flickering intermittently.', 'broken_projector', '2026-06-20 10:00:00', NULL, 'reported', NULL);
+-- [BR-03: Rejection — temporarily closed]
+INSERT INTO dbo.APPROVAL (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason)
+VALUES (5, 'U006', 'rejected', '2026-06-14 10:00:00', 'Space is temporarily closed for renovation.', 'Collaboration Hub (MT-301) is closed for renovation.');
 GO
 
--- Cancelled maintenance record on WS001
-INSERT INTO MAINTENANCE_RECORD (space_code, reporter_id, assigned_staff_id, problem_description, problem_category, start_time, completion_time, status, result_note)
-VALUES
-    ('WS001', 7, NULL, 'Whiteboard marker stains reported.', 'cleaning', '2026-06-01 09:00:00', NULL, 'cancelled', 'Resolved by cleaning staff without formal maintenance.');
+-- [BR-03: Rejection — retired space]
+INSERT INTO dbo.APPROVAL (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason)
+VALUES (6, 'U006', 'rejected', '2026-06-15 11:00:00', 'Space has been decommissioned.', 'Grace Hopper Classroom (CL-202) has been retired and is no longer available.');
 GO
 
--- ====================================================================
--- END OF SAMPLE DATA
--- ====================================================================
+-- Approval for Booking 7 (completed examination)
+INSERT INTO dbo.APPROVAL (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason)
+VALUES (7, 'U005', 'approved', '2026-06-05 10:00:00', 'Approved for final examination.', NULL);
+GO
+
+-- Approval for Booking 8 (completed lecture)
+INSERT INTO dbo.APPROVAL (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason)
+VALUES (8, 'U004', 'approved', '2026-06-08 11:00:00', 'Approved as scheduled.', NULL);
+GO
+
+-- Approval for Booking 11 (approved, not yet checked in)
+INSERT INTO dbo.APPROVAL (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason)
+VALUES (11, 'U005', 'approved', '2026-06-18 09:00:00', 'Approved for TA office hours.', NULL);
+GO
+
+-- Approval for Booking 12 (currently checked in)
+INSERT INTO dbo.APPROVAL (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason)
+VALUES (12, 'U004', 'approved', '2026-06-28 10:00:00', 'Approved for project work.', NULL);
+GO
+
+-- -------------------------------------------------------
+-- USAGE_SESSIONS — check-in/check-out records
+-- -------------------------------------------------------
+
+-- [BR-07 / BR-08: Full check-in and check-out]
+-- Session for Booking 1 (completed — full lifecycle)
+INSERT INTO dbo.USAGE_SESSION (booking_id, checked_in_by, actual_start_time, initial_condition, actual_end_time, final_condition, usage_notes)
+VALUES (1, 'U004', '2026-06-10 08:05:00', 'Clean and tidy. Projector and whiteboard ready.', '2026-06-10 10:00:00', 'Room tidy. Whiteboard erased. Projector off.', 'Lecture completed on time.');
+GO
+
+-- Session for Booking 7 (completed examination)
+INSERT INTO dbo.USAGE_SESSION (booking_id, checked_in_by, actual_start_time, initial_condition, actual_end_time, final_condition, usage_notes)
+VALUES (7, 'U004', '2026-06-08 09:00:00', 'All desks arranged. Microphones working.', '2026-06-08 12:15:00', 'Desks returned to original layout. Minor paper waste.', 'Examination completed. 150 students attended.');
+GO
+
+-- Session for Booking 8 (completed lecture)
+INSERT INTO dbo.USAGE_SESSION (booking_id, checked_in_by, actual_start_time, initial_condition, actual_end_time, final_condition, usage_notes)
+VALUES (8, 'U004', '2026-06-09 13:00:00', 'Room clean. Projector functional.', '2026-06-09 15:10:00', 'Room clean. Projector turned off.', 'Lab session finished. All equipment accounted for.');
+GO
+
+-- [BR-04: No-show — no actual_start_time recorded]
+-- Session for Booking 10 (no-show) — minimal record, only booking_id
+INSERT INTO dbo.USAGE_SESSION (booking_id, checked_in_by, actual_start_time, initial_condition, actual_end_time, final_condition, usage_notes)
+VALUES (10, 'U004', '2026-06-12 08:00:00', 'Room prepared as requested.', NULL, NULL, 'Requester did not show up. No session held.');
+GO
+
+-- Session for Booking 12 (currently checked in — no end time yet)
+INSERT INTO dbo.USAGE_SESSION (booking_id, checked_in_by, actual_start_time, initial_condition, actual_end_time, final_condition, usage_notes)
+VALUES (12, 'U004', '2026-06-30 09:00:00', 'Workspace clean. Whiteboard markers available.', NULL, NULL, NULL);
+GO
+
+-- -------------------------------------------------------
+-- MAINTENANCE RECORDS
+-- -------------------------------------------------------
+
+-- [BR-03 / BR-09: Maintenance blocking and history preservation]
+-- Maintenance #1: In-progress for Robotics Lab (LAB-B102 — under_maintenance)
+INSERT INTO dbo.MAINTENANCE (space_code, reporter_id, assigned_staff_id, problem_description, problem_type, start_time, completion_time, status, result_note)
+VALUES ('LAB-B102', 'U002', 'U004', 'Robotics workstations overheating and frequent crashes. Three computers non-functional.', 'ac_failure', '2026-06-05 08:00:00', NULL, 'in_progress', NULL);
+GO
+
+-- Maintenance #2: Completed maintenance for CL-201 (projector repair)
+INSERT INTO dbo.MAINTENANCE (space_code, reporter_id, assigned_staff_id, problem_description, problem_type, start_time, completion_time, status, result_note)
+VALUES ('CL-201', 'U003', 'U004', 'Projector bulb blown — no image output.', 'broken_projector', '2026-06-01 10:00:00', '2026-06-02 16:00:00', 'completed', 'Replaced projector bulb. Tested and working.');
+GO
+
+-- Maintenance #3: Reported but not yet assigned for WS-001
+INSERT INTO dbo.MAINTENANCE (space_code, reporter_id, assigned_staff_id, problem_description, problem_type, start_time, completion_time, status, result_note)
+VALUES ('WS-001', 'U007', NULL, 'Broken desk in the corner near window.', 'damaged_furniture', '2026-06-28 14:00:00', NULL, 'reported', NULL);
+GO
+
+-- Maintenance #4: Cancelled maintenance for MT-301
+INSERT INTO dbo.MAINTENANCE (space_code, reporter_id, assigned_staff_id, problem_description, problem_type, start_time, completion_time, status, result_note)
+VALUES ('MT-301', 'U005', NULL, 'Network connectivity issues reported.', 'network_problem', '2026-05-20 09:00:00', NULL, 'cancelled', 'Issue resolved externally. No action needed.');
+GO
+
+-- Maintenance #5: Completed cleaning issue for AUD-101
+INSERT INTO dbo.MAINTENANCE (space_code, reporter_id, assigned_staff_id, problem_description, problem_type, start_time, completion_time, status, result_note)
+VALUES ('AUD-101', 'U004', 'U004', 'Stains on seats and sticky floor near stage.', 'cleaning', '2026-06-15 07:00:00', '2026-06-15 12:00:00', 'completed', 'Deep cleaning performed. Seats and floor restored to satisfactory condition.');
+GO
+
+PRINT 'Sample data inserted successfully.';
+GO
