@@ -67,10 +67,12 @@ compatibility: opencode
 ### Phase 3: Keys & Constraints Evaluation
 
 * **Primary Keys (PK):** Ensure every table has an explicit PK. Evaluate Surrogate vs. Natural key usage.
-* **Foreign Keys (FK) & Deletion Strategy:**
-  * **[CASCADE]:** Flag as a **VULNERABILITY (FAIL)** unless justified for tight Parent-Child dependencies (e.g., Weak Entities). DO NOT use if it destroys valuable audit data.
-  * **[RESTRICT / NO ACTION]:** Verify usage to protect critical records.
-  * **[Soft Deletion]:** Note if logical deletion is used.
+* **Foreign Keys (FK) & Deletion/Update Strategy:**
+  * **[CASCADE Violation Check (DELETE)]:** Explicitly cross-reference every `ON DELETE CASCADE` constraint in Step 3 against the historical preservation rules in Step 1. 
+  * Mark as **FAIL (VULNERABILITY)** if `ON DELETE CASCADE` is applied to ANY transactional, lifecycle, or audit table (e.g., approvals, sessions, maintenance records). Do not accept "Parent-Child dependency" as an excuse for these tables; they must use `NO ACTION` or `RESTRICT`.
+  * **[Natural Key Update Policy]:** Evaluate the `ON UPDATE` strategy for all Foreign Keys. Foreign Keys referencing a Natural Key (e.g., `space_code`, string-based identifiers) MUST use `ON UPDATE CASCADE` to prevent broken references if the real-world identifier is modified. Mark as **FAIL** if a Natural Key FK uses `NO ACTION`.
+  * **[RESTRICT / NO ACTION]:** Verify usage to protect critical records upon deletion, and for updates involving immutable Surrogate Keys (e.g., `INT IDENTITY`).
+  * **[Soft Deletion]:** Note if logical deletion (e.g., `is_deleted` flags) is used instead of physical deletion.
 * **Data Integrity Constraints:**
   * **[UNIQUE]:** Scan for logically unique identifiers (e.g., `email`, `phone`, `asset_tag`). Mark as **FAIL** if missing.
   * **[NOT NULL]:** Applied to all mandatory fields.
