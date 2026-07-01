@@ -45,11 +45,10 @@ Convert the requirement analysis into a conceptual ERD with clear entities, rela
     2. **Key Markers**: Mermaid `erDiagram` natively supports `PK` and `FK` markers. However, because this is a Conceptual model, **you MUST NOT use `FK` markers**. Use `PK` for primary identifiers. Any other attribute constraints (e.g., UK, Candidate Key) MUST be enclosed in double quotes (e.g., `"UK"`) at the end of the attribute definition.
 
 - **CONCEPTUAL MODEL ONLY**: Do not include:
-    1. Foreign keys. (Relationships handle the links conceptually).
-    2. Pure junction tables (unless they contain specific business attributes, making them Associative Entities).
-    3. Database indexes.
-    4. Physical database design decisions.
-    5. DBMS-specific types.
+    1. Pure junction tables (unless they contain specific business attributes, making them Associative Entities).
+    2. Database indexes.
+    3. Physical database design decisions.
+    4. DBMS-specific types.
 
 - **Naming Rules**:
     1. Entity names: UPPERCASE singular nouns.
