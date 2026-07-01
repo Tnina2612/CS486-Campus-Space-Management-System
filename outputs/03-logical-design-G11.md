@@ -202,4 +202,4 @@ Table-level CHECK: (completion_time IS NULL OR completion_time >= start_time)
 - **NO ACTION on DELETE for historical tables:** BOOKING, MAINTENANCE, and FACILITY_ASSET use NO ACTION on DELETE to preserve history when referenced parent rows are removed.
 - **CASCADE on DELETE for junction table:** SPACE_FACILITY cascades delete with SPACE because it is a pure mapping table with no independent business meaning.
 - **SET NULL for assigned_staff_id:** When a user is deleted, their maintenance assignments become unassigned (SET NULL) rather than losing the entire maintenance record.
-- **NO ACTION on DELETE for APPROVAL and USAGE_SESSION:** These lifecycle tables use NO ACTION (not CASCADE) to prevent silent data loss of approval decisions and session records if a BOOKING row is accidentally deleted — preserving audit trail per BR-09.
+- **NO ACTION on DELETE for APPROVAL and USAGE_SESSION:** These lifecycle tables use NO ACTION (not CASCADE) to prevent silent data loss of approval decisions and session records if a BOOKING row is accidentally deleted — preserving audit trail.

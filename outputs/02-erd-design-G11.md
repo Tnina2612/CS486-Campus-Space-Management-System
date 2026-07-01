@@ -35,6 +35,7 @@ All 9 entities and 12 relationships listed above appear in the Step 1 analysis. 
 
 ## Conceptual ERD (Mermaid erDiagram — Crow's Foot Notation)
 
+```mermaid
 erDiagram
   USER {
     string user_id PK
@@ -63,17 +64,21 @@ erDiagram
     boolean is_trackable
   }
   SPACE_FACILITY {
-    string space_code PK
-    string catalog_id PK
+    string space_code PK, FK
+    string catalog_id PK, FK
     integer quantity
   }
   FACILITY_ASSET {
     string asset_id PK
+    string catalog_id FK
+    string space_code FK
     string asset_tag "UK"
     string status
   }
   BOOKING {
     string booking_id PK
+    string user_id FK
+    string space_code FK
     datetime requested_start_time
     datetime requested_end_time
     string purpose
@@ -83,6 +88,8 @@ erDiagram
   }
   APPROVAL {
     string approval_id PK
+    string booking_id FK, "UK"
+    string staff_id FK
     string decision
     datetime decision_time
     string decision_note
@@ -90,6 +97,8 @@ erDiagram
   }
   USAGE_SESSION {
     string session_id PK
+    string booking_id FK, "UK"
+    string checked_in_by FK
     datetime actual_start_time
     string initial_condition
     datetime actual_end_time
@@ -98,6 +107,9 @@ erDiagram
   }
   MAINTENANCE {
     string maintenance_id PK
+    string space_code FK
+    string reporter_id FK
+    string assigned_staff_id FK
     string problem_description
     string problem_type
     datetime start_time
@@ -118,6 +130,7 @@ erDiagram
   SPACE }o--|| MAINTENANCE : undergoes
   USER }o--|| MAINTENANCE : reports
   USER }o--o| MAINTENANCE : assigned_to
+```
 
 ## Participation Constraints (Crow's Foot)
 
@@ -153,7 +166,8 @@ erDiagram
 ## Assumptions and Gaps
 
 - SPACE_FACILITY.quantity represents the count of non-trackable items of that catalog type in the space.
-- FACILITY_ASSET does not include FK attributes in the conceptual model because relationships handle the links.
+- FACILITY_ASSET includes FK attributes explicitly labeled with `FK` markers to show linkage to FACILITY_CATALOG and SPACE.
 - The USER→MAINTENANCE relationship appears twice with distinct roles: one for reporter (mandatory) and one for assigned staff (optional). These are semantically distinct and shown as separate relationship lines.
 - The USER→USAGE_SESSION relationship (checked_in_by) is explicitly included — the staff member who performs check-in is distinct from the requester.
+- assigned_staff_id on MAINTENANCE is nullable (optional participation), but is labeled `FK` to show the referential link to USER.
 - No gap: all 9 entities and 12 relationships from Step 1 are fully represented.

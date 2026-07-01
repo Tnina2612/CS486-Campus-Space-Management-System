@@ -7,7 +7,7 @@ compatibility: opencode
 # Step 2 - Conceptual Design / ERD
 
 ## Objective
-Convert the requirement analysis into a conceptual ERD with clear entities, relationships, and participation constraints.
+Convert the requirement analysis into an ERD with clear entities, relationships, foreign keys, and participation constraints.
 
 ## Input Context
 - Read `outputs/01-business-req-analysis-G11.md`.
@@ -17,7 +17,7 @@ Convert the requirement analysis into a conceptual ERD with clear entities, rela
 ## Instructions & Constraints
 - Save to: `outputs/02-erd-design-G11.md`
 
-- Instruction: Based on the output of Step 1, design a Conceptual Entity-Relationship Diagram (ERD). Describe the main entities, attributes, relationships, cardinalities, and participation constraints. Provide the visual representation using Mermaid `erDiagram` syntax. Ensure the diagram visually represents the hybrid pattern: `space` has a many-to-many relationship with `facility_catalog`. Because this relationship tracks a 'quantity', represent it as an Associative Entity (`space_facility`).
+- Instruction: Based on the output of Step 1, design an Entity-Relationship Diagram (ERD). Describe the main entities, attributes, relationships, cardinalities, and participation constraints. Provide the visual representation using Mermaid `erDiagram` syntax. Ensure the diagram visually represents the hybrid pattern: `space` has a many-to-many relationship with `facility_catalog`. Because this relationship tracks a 'quantity', represent it as an Associative Entity (`space_facility`).
 
 - For every relationship:
     * Determine minimum participation (0 or 1).
@@ -42,9 +42,9 @@ Convert the requirement analysis into a conceptual ERD with clear entities, rela
 
 - **CRITICAL FORMATTING CONSTRAINTS:**
     1. Do NOT include any inline comments (e.g., `%%`) inside the Mermaid diagram code, as this will break the CLI output parser.
-    2. **Key Markers**: Mermaid `erDiagram` natively supports `PK` and `FK` markers. However, because this is a Conceptual model, **you MUST NOT use `FK` markers**. Use `PK` for primary identifiers. Any other attribute constraints (e.g., UK, Candidate Key) MUST be enclosed in double quotes (e.g., `"UK"`) at the end of the attribute definition.
+    2. **Key Markers**: Mermaid `erDiagram` natively supports `PK` and `FK` markers. **You MUST prioritize explicitly labeling Foreign Keys using the `FK` marker** to show how tables link together. Use `PK` for primary identifiers. Any other attribute constraints (e.g., UK, Candidate Key) MUST be enclosed in double quotes (e.g., `"UK"`) at the end of the attribute definition.
 
-- **CONCEPTUAL MODEL ONLY**: Do not include:
+- **MODEL CONSTRAINTS**: Do not include:
     1. Pure junction tables (unless they contain specific business attributes, making them Associative Entities).
     2. Database indexes.
     3. Physical database design decisions.
@@ -58,8 +58,9 @@ Convert the requirement analysis into a conceptual ERD with clear entities, rela
 
 - **ERD VALIDATION CHECKLIST**: Before finalizing:
     1. Every relationship must connect exactly two entities.
-    2. Every entity must have a primary identifier attribute.
-    3. No orphan entity is allowed.
-    4. No duplicate relationship is allowed.
-    5. Mermaid syntax must be valid.
-    6. All entity names must be uppercase singular nouns.
+    2. Every entity must have a primary identifier attribute (`PK`).
+    3. Dependent entities must have foreign keys correctly labeled with `FK`.
+    4. No orphan entity is allowed.
+    5. No duplicate relationship is allowed.
+    6. Mermaid syntax must be valid.
+    7. All entity names must be uppercase singular nouns.

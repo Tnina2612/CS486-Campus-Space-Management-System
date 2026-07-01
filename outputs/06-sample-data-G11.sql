@@ -30,7 +30,7 @@ VALUES
 GO
 
 -- -------------------------------------------------------
--- SPACES — cover all current_status values
+-- SPACES — cover all current_status values including 'in_use'
 -- -------------------------------------------------------
 INSERT INTO dbo.SPACE (space_code, space_name, space_type, building, floor, room_number, capacity, current_status, usage_policy)
 VALUES
@@ -40,7 +40,8 @@ VALUES
     ('LAB-B102','Robotics Lab',             'project_laboratory',  'CS Building',  1, 'B102',20,  'under_maintenance',  'Project work — currently under maintenance.'),
     ('MT-301',  'Collaboration Hub',        'meeting_room',        'Main Hall',    3, '301', 12,  'temporarily_closed', 'Meetings and group discussions — closed for renovation.'),
     ('WS-001',  'Creative Workspace',       'student_workspace',   'CS Building',  2, '001', 15,  'available',          'Student project work and study groups.'),
-    ('CL-202',  'Grace Hopper Classroom',   'classroom',           'CS Building',  2, '202', 35,  'retired',            'Decommissioned — no longer used.');
+    ('CL-202',  'Grace Hopper Classroom',   'classroom',           'CS Building',  2, '202', 35,  'retired',            'Decommissioned — no longer used.'),
+    ('AUD-102', 'Dijkstra Lecture Hall',    'auditorium',          'Main Hall',    2, '201', 100, 'in_use',             'Currently occupied — lectures in progress.');
 GO
 
 -- -------------------------------------------------------
@@ -77,7 +78,10 @@ VALUES
     ('WS-001',  'CAT-WHITE',1),
     ('MT-301',  'CAT-PROJ', 1),
     ('MT-301',  'CAT-AC',   2),
-    ('CL-202',  'CAT-PROJ', 1);
+    ('CL-202',  'CAT-PROJ', 1),
+    ('AUD-102', 'CAT-PROJ', 1),
+    ('AUD-102', 'CAT-AC',   2),
+    ('AUD-102', 'CAT-MIC',  2);
 GO
 
 -- -------------------------------------------------------
@@ -150,25 +154,25 @@ INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_en
 VALUES ('U001', 'LAB-B101', '2026-06-11 14:00:00', '2026-06-11 17:00:00', 'Python Workshop for beginners', 20, 'workshop', 'pending');
 GO
 
--- [BR-02: Overlap prevention — rejected due to time conflict with Booking 1]
+-- [BR-02: Overlap prevention — rejected due to time conflict]
 -- Booking 3: Rejected because it overlaps with Booking 1 in CL-201
 INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
 VALUES ('U008', 'CL-201', '2026-06-10 09:00:00', '2026-06-10 11:00:00', 'AI Seminar — overlapping with existing booking', 30, 'seminar', 'rejected');
 GO
 
--- [BR-03: Unavailable space blocked]
+-- [BR-03: Unavailable space blocked — under maintenance]
 -- Booking 4: Rejected — space LAB-B102 is under maintenance
 INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
 VALUES ('U002', 'LAB-B102', '2026-06-12 10:00:00', '2026-06-12 12:00:00', 'Robotics practical session', 15, 'examination', 'rejected');
 GO
 
--- [BR-03: Temporarily closed space blocked]
+-- [BR-03: Unavailable space blocked — temporarily closed]
 -- Booking 5: Rejected — space MT-301 is temporarily closed
 INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
 VALUES ('U007', 'MT-301', '2026-06-15 13:00:00', '2026-06-15 15:00:00', 'Student project meeting', 10, 'meeting', 'rejected');
 GO
 
--- [BR-03: Retired space blocked]
+-- [BR-03: Unavailable space blocked — retired]
 -- Booking 6: Rejected — space CL-202 is retired
 INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
 VALUES ('U008', 'CL-202', '2026-06-16 09:00:00', '2026-06-16 11:00:00', 'Legacy course review', 25, 'lecture', 'rejected');
@@ -212,7 +216,7 @@ INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_en
 VALUES ('U008', 'AUD-101', '2026-07-01 10:00:00', '2026-07-01 12:00:00', 'Guest lecture on AI Ethics', 180, 'lecture', 'pending');
 GO
 
--- Booking 14: Administrative event
+-- Booking 14: Administrative event (MT-301 closed, but this tests pending on closed space)
 INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
 VALUES ('U005', 'MT-301', '2026-07-05 09:00:00', '2026-07-05 11:00:00', 'Department staff meeting — closed room', 10, 'administrative_event', 'pending');
 GO
@@ -287,8 +291,8 @@ INSERT INTO dbo.USAGE_SESSION (booking_id, checked_in_by, actual_start_time, ini
 VALUES (8, 'U004', '2026-06-09 13:00:00', 'Room clean. Projector functional.', '2026-06-09 15:10:00', 'Room clean. Projector turned off.', 'Lab session finished. All equipment accounted for.');
 GO
 
--- [BR-04: No-show — no actual_start_time recorded]
--- Session for Booking 10 (no-show) — minimal record, only booking_id
+-- [BR-04: No-show — recorded as minimal session]
+-- Session for Booking 10 (no-show)
 INSERT INTO dbo.USAGE_SESSION (booking_id, checked_in_by, actual_start_time, initial_condition, actual_end_time, final_condition, usage_notes)
 VALUES (10, 'U004', '2026-06-12 08:00:00', 'Room prepared as requested.', NULL, NULL, 'Requester did not show up. No session held.');
 GO
@@ -328,5 +332,66 @@ INSERT INTO dbo.MAINTENANCE (space_code, reporter_id, assigned_staff_id, problem
 VALUES ('AUD-101', 'U004', 'U004', 'Stains on seats and sticky floor near stage.', 'cleaning', '2026-06-15 07:00:00', '2026-06-15 12:00:00', 'completed', 'Deep cleaning performed. Seats and floor restored to satisfactory condition.');
 GO
 
-PRINT 'Sample data inserted successfully.';
+-- ============================================================
+-- EDGE CASE TESTS: Trigger validation and constraint enforcement
+-- ============================================================
+
+-- [Testing BR-11 / Trigger: SPACE_FACILITY quantity vs FACILITY_ASSET count]
+-- Attempting to UPDATE SPACE_FACILITY.quantity for a trackable catalog (CAT-COMP)
+-- to a value exceeding the actual asset count for LAB-B101 (25 assets exist).
+-- This should TRIGGER trg_space_facility_validate_quantity and ROLLBACK.
+BEGIN TRY
+    UPDATE dbo.SPACE_FACILITY
+    SET quantity = 999
+    WHERE space_code = 'LAB-B101' AND catalog_id = 'CAT-COMP';
+
+    PRINT 'FAIL: Trigger did not prevent invalid quantity update.';
+END TRY
+BEGIN CATCH
+    PRINT 'PASS: Trigger correctly blocked quantity exceeding asset count. Error: ' + ERROR_MESSAGE();
+END CATCH
+GO
+
+-- [Testing BR-11: Valid quantity update for trackable catalog]
+-- Updating SPACE_FACILITY.quantity for CAT-COMP in LAB-B101 to 20 (less than 25 assets).
+-- This should succeed.
+BEGIN TRY
+    UPDATE dbo.SPACE_FACILITY
+    SET quantity = 20
+    WHERE space_code = 'LAB-B101' AND catalog_id = 'CAT-COMP';
+
+    PRINT 'PASS: Valid quantity update succeeded.';
+END TRY
+BEGIN CATCH
+    PRINT 'FAIL: Valid quantity update was blocked. Error: ' + ERROR_MESSAGE();
+END CATCH
+GO
+
+-- [Testing BR-02 / CHECK: Time range constraint on BOOKING]
+-- Attempting to insert a booking with end time before start time.
+BEGIN TRY
+    INSERT INTO dbo.BOOKING (user_id, space_code, requested_start_time, requested_end_time, purpose, expected_participants, booking_type, status)
+    VALUES ('U001', 'CL-201', '2026-07-01 14:00:00', '2026-07-01 13:00:00', 'Invalid time range test', 10, 'meeting', 'pending');
+
+    PRINT 'FAIL: CHECK constraint did not prevent inverted time range.';
+END TRY
+BEGIN CATCH
+    PRINT 'PASS: CHECK constraint blocked inverted time range. Error: ' + ERROR_MESSAGE();
+END CATCH
+GO
+
+-- [Testing BR-06 / CHECK: Rejection without reason]
+-- Attempting to insert an approval with decision='rejected' but NULL rejection_reason.
+BEGIN TRY
+    INSERT INTO dbo.APPROVAL (booking_id, staff_id, decision, decision_time, decision_note, rejection_reason)
+    VALUES (2, 'U004', 'rejected', '2026-06-11 10:00:00', 'Rejected.', NULL);
+
+    PRINT 'FAIL: CHECK constraint did not prevent rejection without reason.';
+END TRY
+BEGIN CATCH
+    PRINT 'PASS: CHECK constraint blocked rejection without reason. Error: ' + ERROR_MESSAGE();
+END CATCH
+GO
+
+PRINT 'Sample data insertion completed successfully.';
 GO
