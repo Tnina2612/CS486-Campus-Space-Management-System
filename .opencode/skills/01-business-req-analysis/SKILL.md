@@ -16,4 +16,6 @@ Analyze the provided business requirement document and extract the business purp
 
 ## Instructions & Constraints
 - Save to: `outputs/01-business-req-analysis-G11.md`
-- Instruction: Analyze the provided business requirement document. Identify and list the following clearly: business purpose, actors, entities, attributes, relationships, cardinalities, and all business rules. You MUST include the explicitly defined "Catalog vs. Asset Hybrid Pattern" (FACILITY_CATALOG, SPACE_FACILITY, FACILITY_ASSET) in your entities and relationships list.
+- Instruction: Analyze the provided business requirement document. Identify and list the following clearly: business purpose, actors, entities, attributes, relationships, cardinalities, and all business rules.
+- **Entity Overrides**: You MUST include the explicitly defined "Catalog vs. Asset Hybrid Pattern" (FACILITY_CATALOG, SPACE_FACILITY, FACILITY_ASSET) AND the "Booking Lifecycle Normalization" (BOOKING, APPROVAL, USAGE_SESSION) in your entities and relationships list as defined in the global rules.
+- **Statuses/Enums**: You MUST explicitly extract and list all possible status values (e.g., booking statuses, space statuses, maintenance statuses) from the business requirement.

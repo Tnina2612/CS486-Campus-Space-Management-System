@@ -16,6 +16,11 @@ Create useful SQL queries that answer business questions from the completed data
 
 ## Instructions & Constraints
 - **Save to:** `outputs/07-query-design-G11.sql`
+- **Database Context (CRITICAL):** The file MUST start with the following lines to ensure the queries execute against the correct database:
+  ```sql
+  USE [CampusSpaceManagement];
+  GO
+  ```
 - **Task:** Design and write exactly 5 meaningful Microsoft SQL Server queries.
 
 - **Metadata Requirement:** For each of the 5 queries, you MUST use SQL comments (`--`) above the query to document:

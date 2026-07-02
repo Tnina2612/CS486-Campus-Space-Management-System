@@ -43,4 +43,5 @@ Instead of random inserts, your data MUST explicitly prove that the database des
 * **Target File:** Save output exactly to `outputs/06-sample-data-G11.sql`.
 * **SQL Standard:** ONLY output standard, executable SQL `INSERT` statements. 
 * **Column Explicitness:** NEVER use `INSERT INTO table VALUES (...)`. You MUST explicitly list column names: `INSERT INTO table_name (col1, col2) VALUES (val1, val2);`.
+* **IDENTITY Rules (CRITICAL):** Because primary keys use `IDENTITY(1,1)`, you MUST NOT insert values directly into primary key columns. Let SQL Server auto-generate them. To maintain Foreign Key relationships in this script, you MUST declare and use SQL variables (e.g., `DECLARE @UserId1 INT = SCOPE_IDENTITY();`) immediately after inserting a parent record, and use that variable when inserting child records.
 * **Documentation:** Add blank lines and clear `--` comments separating the hierarchical phases and the specific Business Rule test blocks.

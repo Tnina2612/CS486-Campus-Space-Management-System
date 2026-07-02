@@ -4,225 +4,174 @@
 
 ### Entity-to-Table Mapping
 
-| Entity (Step 2) | Table (Step 3) | Status |
-|-----------------|----------------|--------|
-| USER | USER | PASS |
-| SPACE | SPACE | PASS |
-| FACILITY_CATALOG | FACILITY_CATALOG | PASS |
-| SPACE_FACILITY | SPACE_FACILITY | PASS |
-| FACILITY_ASSET | FACILITY_ASSET | PASS |
-| BOOKING | BOOKING | PASS |
-| APPROVAL | APPROVAL | PASS |
-| USAGE_SESSION | USAGE_SESSION | PASS |
-| MAINTENANCE | MAINTENANCE | PASS |
+| ERD Entity (Step 2) | Relational Table (Step 3) | Status |
+|--------------------|--------------------------|--------|
+| USER | USER | **PASS** |
+| SPACE | SPACE | **PASS** |
+| FACILITY_CATALOG | FACILITY_CATALOG | **PASS** |
+| SPACE_FACILITY | SPACE_FACILITY | **PASS** |
+| FACILITY_ASSET | FACILITY_ASSET | **PASS** |
+| BOOKING | BOOKING | **PASS** |
+| APPROVAL | APPROVAL | **PASS** |
+| USAGE_SESSION | USAGE_SESSION | **PASS** |
+| MAINTENANCE_RECORD | MAINTENANCE_RECORD | **PASS** |
 
-All 9 entities mapped to 9 tables. No extra table.
+All entities map 1-to-1. No missing or unapproved tables.
 
 ### Weak Entities
-None identified in the ERD. N/A.
+No weak entities exist in the ERD. **N/A**
 
 ### 1:1 Relationships
 
-| Relationship | FK Column | UNIQUE? | NOT NULL? | FK Side | Status |
-|-------------|-----------|---------|-----------|---------|--------|
-| BOOKING → APPROVAL | APPROVAL.booking_id | YES | YES | APPROVAL | PASS |
-| BOOKING → USAGE_SESSION | USAGE_SESSION.booking_id | YES | YES | USAGE_SESSION | PASS |
+| Relationship | FK Column | UNIQUE? | NOT NULL? | Placement | Status |
+|-------------|-----------|---------|-----------|-----------|--------|
+| BOOKING → APPROVAL | APPROVAL.booking_id | YES | YES | Child table (APPROVAL) — correct | **PASS** |
+| BOOKING → USAGE_SESSION | USAGE_SESSION.booking_id | YES | YES | Child table (USAGE_SESSION) — correct | **PASS** |
 
-Both 1:1 relationships properly implemented with UNIQUE constraint and NOT NULL on the FK. Both use NO ACTION on DELETE (preserving history).
+Both 1:1 relationships are correctly enforced via UNIQUE + NOT NULL on the FK in the child table. The split is justified by the Booking Lifecycle Normalization rule.
 
 ### 1:N Relationships
 
-| Relationship | FK Column | NOT NULL? | On Correct Side? | Status |
-|-------------|-----------|-----------|------------------|--------|
-| USER → BOOKING | BOOKING.user_id | YES | YES | PASS |
-| SPACE → BOOKING | BOOKING.space_code | YES | YES | PASS |
-| USER (decider) → APPROVAL | APPROVAL.staff_id | YES | YES | PASS |
-| USER (check-in) → USAGE_SESSION | USAGE_SESSION.checked_in_by | YES | YES | PASS |
-| FACILITY_CATALOG → SPACE_FACILITY | SPACE_FACILITY.catalog_id | YES (part of PK) | YES | PASS |
-| SPACE → SPACE_FACILITY | SPACE_FACILITY.space_code | YES (part of PK) | YES | PASS |
-| FACILITY_CATALOG → FACILITY_ASSET | FACILITY_ASSET.catalog_id | YES | YES | PASS |
-| SPACE → FACILITY_ASSET | FACILITY_ASSET.space_code | YES | YES | PASS |
-| USER (reporter) → MAINTENANCE | MAINTENANCE.reporter_id | YES | YES | PASS |
-| USER (assigned staff) → MAINTENANCE | MAINTENANCE.assigned_staff_id | NO (nullable) | YES | PASS |
-| SPACE → MAINTENANCE | MAINTENANCE.space_code | YES | YES | PASS |
+| Relationship | FK Column | FK Side | NOT NULL? | Status |
+|-------------|-----------|---------|-----------|--------|
+| USER → BOOKING | BOOKING.user_id | Many (BOOKING) | YES | **PASS** |
+| SPACE → BOOKING | BOOKING.space_code | Many (BOOKING) | YES | **PASS** |
+| FACILITY_CATALOG → FACILITY_ASSET | FACILITY_ASSET.catalog_id | Many (FACILITY_ASSET) | YES | **PASS** |
+| SPACE → FACILITY_ASSET | FACILITY_ASSET.space_code | Many (FACILITY_ASSET) | YES | **PASS** |
+| USER → APPROVAL | APPROVAL.staff_id | Many (APPROVAL) | YES | **PASS** |
+| USER → USAGE_SESSION (checked_in_by) | USAGE_SESSION.checked_in_by | Many (USAGE_SESSION) | YES | **PASS** |
+| USER → USAGE_SESSION (completed_by) | USAGE_SESSION.completed_by | Many (USAGE_SESSION) | NO (nullable) | **PASS** |
+| SPACE → MAINTENANCE_RECORD | MAINTENANCE_RECORD.space_code | Many (MAINTENANCE_RECORD) | YES | **PASS** |
+| USER → MAINTENANCE_RECORD (reporter_id) | MAINTENANCE_RECORD.reporter_id | Many (MAINTENANCE_RECORD) | YES | **PASS** |
+| USER → MAINTENANCE_RECORD (assigned_staff_id) | MAINTENANCE_RECORD.assigned_staff_id | Many (MAINTENANCE_RECORD) | NO (nullable) | **PASS** |
 
-All 1:N FK placements and nullability correct.
+All FKs correctly placed on the "Many" side. Nullable columns match optional participation.
+
+### Non-FK Attribute Nullability (Lifecycle Columns)
+
+| Table | Column | Step 3 Nullable? | Expected Timing | Status |
+|-------|--------|-----------------|-----------------|--------|
+| BOOKING | status | NOT NULL (no DEFAULT) | Default should be 'Pending' at creation | **WARNING** — missing DEFAULT 'Pending' |
+| APPROVAL | decision | NOT NULL | Set at decision time (row created at decision) | **PASS** |
+| APPROVAL | decision_time | NOT NULL | Set at decision time | **PASS** |
+| APPROVAL | decision_note | NULL | Optional at decision time | **PASS** |
+| APPROVAL | rejection_reason | NULL | Conditional on 'Rejected' decision | **PASS** |
+| USAGE_SESSION | checked_in_by | NOT NULL | Recorded at check-in | **PASS** |
+| USAGE_SESSION | actual_start | NOT NULL | Recorded at check-in | **PASS** |
+| USAGE_SESSION | initial_condition | NOT NULL | Recorded at check-in | **PASS** |
+| USAGE_SESSION | actual_end | NULL | Recorded at completion | **PASS** |
+| USAGE_SESSION | final_condition | NULL | Recorded at completion | **PASS** |
+| USAGE_SESSION | completed_by | NULL | Recorded at completion | **PASS** |
+| USAGE_SESSION | usage_notes | NULL | Optional at completion | **PASS** |
+| MAINTENANCE_RECORD | completion_time | NULL | Recorded when maintenance completed | **PASS** |
+| MAINTENANCE_RECORD | result_note | NULL | Optional at completion | **PASS** |
 
 ### M:N Relationships
 
-| Entities | Junction Table | Composite PK? | Business Attribute | Status |
-|----------|---------------|---------------|-------------------|--------|
-| SPACE ↔ FACILITY_CATALOG | SPACE_FACILITY | (space_code, catalog_id) | quantity | PASS |
+| Entities | Junction Table | Composite PK | Status |
+|----------|---------------|-------------|--------|
+| SPACE ↔ FACILITY_CATALOG | SPACE_FACILITY | (space_code, catalog_id) | **PASS** |
 
-### Non-FK Attribute Nullability (Lifecycle Timing)
-
-| Table | Column | Step 3 Nullable? | Expected Timing per Requirement | Status |
-|-------|--------|-----------------|--------------------------------|--------|
-| BOOKING | status | NOT NULL (DEFAULT) | Set at creation, updated later | PASS |
-| BOOKING | requested_start_time | NOT NULL | Set at creation | PASS |
-| BOOKING | requested_end_time | NOT NULL | Set at creation | PASS |
-| BOOKING | purpose | NOT NULL | Set at creation | PASS |
-| BOOKING | expected_participants | NOT NULL | Set at creation | PASS |
-| BOOKING | booking_type | NOT NULL | Set at creation | PASS |
-| APPROVAL | decision | NOT NULL | Recorded at decision time | PASS |
-| APPROVAL | decision_time | NOT NULL | Recorded at decision time | PASS |
-| APPROVAL | decision_note | NULL | Optional at decision time | PASS |
-| APPROVAL | rejection_reason | NULL | Required only if rejected (CHECK enforced) | PASS |
-| USAGE_SESSION | actual_start_time | NOT NULL | Recorded at check-in | PASS |
-| USAGE_SESSION | checked_in_by | NOT NULL | Recorded at check-in | PASS |
-| USAGE_SESSION | initial_condition | NULL | Recorded at check-in (optional) | PASS |
-| USAGE_SESSION | actual_end_time | NULL | Recorded at check-out (later stage) | PASS |
-| USAGE_SESSION | final_condition | NULL | Recorded at check-out (optional) | PASS |
-| USAGE_SESSION | usage_notes | NULL | Optional notes at check-out | PASS |
-| MAINTENANCE | status | NOT NULL (DEFAULT) | Set at creation, updated later | PASS |
-| MAINTENANCE | problem_description | NOT NULL | Set at creation | PASS |
-| MAINTENANCE | problem_type | NOT NULL | Set at creation | PASS |
-| MAINTENANCE | start_time | NOT NULL | Set at creation | PASS |
-| MAINTENANCE | completion_time | NULL | Recorded at completion | PASS |
-| MAINTENANCE | result_note | NULL | Recorded at completion | PASS |
-| MAINTENANCE | assigned_staff_id | NULL | Assigned later | PASS |
-
-### ISA/Subtyping
-None. N/A.
+### ISA / Subtyping Relationships
+None identified. **N/A**
 
 ---
 
 ## Phase 2: Business Rules Traceability Matrix
 
 | Rule ID | Business Rule Description | Mapped DB Element | Constraint / Technical Logic | Status |
-|---------|--------------------------|-------------------|------------------------------|--------|
-| BR-01 | Every user must have a registered university account | USER table | PK + NOT NULL on all required USER columns | PASS |
-| BR-02 | Same space cannot have overlapping approved bookings | BOOKING | Application logic (multi-row time overlap check against approved bookings) | DELEGATED_TO_APP |
-| BR-03 | Space under maintenance/closed/retired cannot be booked | SPACE + MAINTENANCE | Application logic (cross-table validation: SPACE.current_status and MAINTENANCE.status at booking time) | DELEGATED_TO_APP |
-| BR-04 | Booking status lifecycle: pending→approved→checked_in→completed... | BOOKING.status | CHECK(status IN (7 values)); state transitions via application logic | DELEGATED_TO_APP |
-| BR-05 | Approval requires staff, decision time, note | APPROVAL | staff_id NOT NULL, decision_time NOT NULL, decision_note NULL | PASS |
-| BR-06 | Rejection requires rejection reason | APPROVAL | CHECK((decision='rejected' AND rejection_reason IS NOT NULL) OR (decision='approved')) | PASS |
-| BR-07 | Check-in records actual start time, who checked in, initial condition | USAGE_SESSION | actual_start_time NOT NULL, checked_in_by NOT NULL, initial_condition NULL | PASS |
-| BR-08 | Check-out records actual end time, final condition, usage notes | USAGE_SESSION | actual_end_time NULL, final_condition NULL, usage_notes NULL | PASS |
-| BR-09 | No hard deletes of completed sessions/history | BOOKING, MAINTENANCE + all FK references | ON DELETE NO ACTION on BOOKING and MAINTENANCE parent FKs | PASS |
-| BR-10 | Unique asset tag per trackable facility | FACILITY_ASSET.asset_tag | UNIQUE constraint | PASS |
-| BR-11 | Catalog vs. Asset Hybrid Pattern | FACILITY_CATALOG + SPACE_FACILITY + FACILITY_ASSET | Three-table pattern with is_trackable flag | PASS |
-| BR-12 | Maintenance blocks booking of unavailable spaces | SPACE.current_status + MAINTENANCE.status | CHECK on status values; overlap prevention delegated to app | PASS |
-| A-01 | User IDs university-assigned and globally unique | USER.user_id | Natural PK | PASS |
-| A-02 | Booking always for exactly one space | BOOKING.space_code | NOT NULL FK | PASS |
-| A-03 | Maintenance tied to space, not individual assets | MAINTENANCE.space_code | NOT NULL FK | PASS |
-| A-04 | Check-in/out performed by facility staff | USAGE_SESSION.checked_in_by | NOT NULL FK → USER | PASS |
-| A-05 | is_trackable determines SPACE_FACILITY vs FACILITY_ASSET | FACILITY_CATALOG.is_trackable | BIT flag; application-level routing | DELEGATED_TO_APP |
-| A-06 | Account status values system-defined | USER.account_status | CHECK(account_status IN ('active','inactive','suspended')) | PASS |
-| A-07 | Maintenance status values system-defined | MAINTENANCE.status | CHECK(status IN ('reported','in_progress','completed','cancelled')) | PASS |
-| A-08 | Facility asset status values system-defined | FACILITY_ASSET.status | CHECK(status IN ('working','damaged','under_repair','retired')) | PASS |
-| A-09 | 'other' problem_type for uncovered issues | MAINTENANCE.problem_type | CHECK includes 'other' as allowed value | PASS |
-| A-10 | Decision column captures approve/reject outcome | APPROVAL.decision | CHECK(decision IN ('approved','rejected')) | PASS |
+|---------|--------------------------|------------------|------------------------------|--------|
+| BR-01 | Unique space code | SPACE.space_code | PK | **PASS** |
+| BR-02 | Unique asset tag | FACILITY_ASSET.asset_tag | UNIQUE constraint | **PASS** |
+| BR-03 | No overlapping approved bookings for same space | BOOKING | Deferred to application logic (cross-row validation across BOOKING table) | **DELEGATED_TO_APP** |
+| BR-04 | Unavailable spaces (under maintenance, closed, retired) cannot be booked | SPACE.current_status + MAINTENANCE_RECORD | Deferred to application logic (needs to check SPACE.current_status and active MAINTENANCE_RECORD rows) | **DELEGATED_TO_APP** |
+| BR-05 | Strict 1-to-1 booking lifecycle | APPROVAL.booking_id, USAGE_SESSION.booking_id | UNIQUE constraint on both | **PASS** |
+| BR-06 | Rejection requires reason | APPROVAL.rejection_reason | CHECK(decision <> 'Rejected' OR rejection_reason IS NOT NULL) | **PASS** |
+| BR-07 | Catalog vs. Asset Hybrid Pattern | FACILITY_CATALOG, SPACE_FACILITY, FACILITY_ASSET | is_trackable BIT, quantity INT, asset_tag UNIQUE, status CHECK | **PASS** |
+| BR-08 | Space under maintenance cannot be booked | MAINTENANCE_RECORD.status | Deferred to application logic (check for active maintenance records) | **DELEGATED_TO_APP** |
+| BR-09 | Actual end must be after actual start | USAGE_SESSION.actual_end, actual_start | CHECK(actual_end IS NULL OR actual_end > actual_start) | **PASS** |
+| BR-10 | Historical preservation of all records | All tables | ON DELETE NO ACTION on all historical tables | **PASS** |
+| BR-11 | Booking status lifecycle | BOOKING.status | CHECK constraint with all valid status values | **PASS** |
+| BR-12 | End time must be after start time | BOOKING.requested_start, requested_end | CHECK(requested_end > requested_start) | **PASS** |
+| BR-13 | Maintenance completion after start | MAINTENANCE_RECORD.start_time, completion_time | CHECK(completion_time IS NULL OR completion_time > start_time) | **PASS** |
+| BR-14 | Capacity must be positive | SPACE.capacity | CHECK(capacity > 0) | **PASS** |
+| BR-15 | Expected participants must be positive | BOOKING.expected_participants | CHECK(expected_participants > 0) | **PASS** |
+| BR-16 | Session completion groups all fields | USAGE_SESSION | CHECK((actual_end IS NULL AND final_condition IS NULL AND completed_by IS NULL) OR (actual_end IS NOT NULL AND final_condition IS NOT NULL AND completed_by IS NOT NULL)) | **PASS** |
+| BR-17 | Unique email | USER.email | UNIQUE constraint | **PASS** |
 
 ---
 
 ## Phase 3: Keys & Constraints Evaluation
 
 ### Primary Keys
+Every table has an explicit PK. Surrogate keys (INT IDENTITY) are used for FACILITY_CATALOG, FACILITY_ASSET, BOOKING, APPROVAL, USAGE_SESSION, MAINTENANCE_RECORD. Natural keys used for USER (user_id) and SPACE (space_code). SPACE_FACILITY uses a composite natural PK. **PASS**
 
-| Table | PK Column(s) | Type | Status |
-|-------|-------------|------|--------|
-| USER | user_id | Natural | PASS |
-| SPACE | space_code | Natural | PASS |
-| FACILITY_CATALOG | catalog_id | Natural | PASS |
-| SPACE_FACILITY | (space_code, catalog_id) | Composite Natural | PASS |
-| FACILITY_ASSET | asset_id | Surrogate IDENTITY | PASS |
-| BOOKING | booking_id | Surrogate IDENTITY | PASS |
-| APPROVAL | approval_id | Surrogate IDENTITY | PASS |
-| USAGE_SESSION | session_id | Surrogate IDENTITY | PASS |
-| MAINTENANCE | maintenance_id | Surrogate IDENTITY | PASS |
+### Foreign Keys — Deletion/Update Strategy
 
-### Foreign Keys — ON DELETE Evaluation
+| FK | ON DELETE | ON UPDATE | Assessment |
+|----|-----------|-----------|------------|
+| SPACE_FACILITY.space_code → SPACE | CASCADE | CASCADE | Junction table — CASCADE acceptable |
+| SPACE_FACILITY.catalog_id → FACILITY_CATALOG | CASCADE | NO ACTION | Junction table — CASCADE acceptable; surrogate key, NO ACTION on update |
+| FACILITY_ASSET.catalog_id → FACILITY_CATALOG | NO ACTION | NO ACTION | Historical asset tracking — correct |
+| FACILITY_ASSET.space_code → SPACE | NO ACTION | CASCADE | Natural key — CASCADE on update correct |
+| BOOKING.user_id → USER | NO ACTION | CASCADE | Historical booking — NO ACTION on delete; natural key CASCADE on update |
+| BOOKING.space_code → SPACE | NO ACTION | CASCADE | Historical booking — NO ACTION on delete; natural key CASCADE on update |
+| APPROVAL.booking_id → BOOKING | NO ACTION | NO ACTION | Audit table — correct |
+| APPROVAL.staff_id → USER | NO ACTION | CASCADE | Natural key CASCADE on update correct |
+| USAGE_SESSION.booking_id → BOOKING | NO ACTION | NO ACTION | Audit table — correct |
+| USAGE_SESSION.checked_in_by → USER | NO ACTION | CASCADE | Natural key CASCADE on update correct |
+| USAGE_SESSION.completed_by → USER | NO ACTION | CASCADE | Natural key CASCADE on update correct |
+| MAINTENANCE_RECORD.space_code → SPACE | NO ACTION | CASCADE | Natural key CASCADE on update correct |
+| MAINTENANCE_RECORD.reporter_id → USER | NO ACTION | CASCADE | Natural key CASCADE on update correct |
+| MAINTENANCE_RECORD.assigned_staff_id → USER | NO ACTION | CASCADE | Nullable FK, natural key CASCADE on update correct |
 
-| From Table | From Column | To Table | ON DELETE | Vulnerability? | Status |
-|------------|-------------|----------|-----------|----------------|--------|
-| BOOKING | user_id | USER | NO ACTION | No — preserves booking history | PASS |
-| BOOKING | space_code | SPACE | NO ACTION | No — preserves booking history | PASS |
-| APPROVAL | booking_id | BOOKING | NO ACTION | No — preserves approval history | PASS |
-| APPROVAL | staff_id | USER | NO ACTION | No | PASS |
-| USAGE_SESSION | booking_id | BOOKING | NO ACTION | No — preserves session history | PASS |
-| USAGE_SESSION | checked_in_by | USER | NO ACTION | No | PASS |
-| SPACE_FACILITY | space_code | SPACE | CASCADE | No — pure junction table, safe to cascade | PASS |
-| SPACE_FACILITY | catalog_id | FACILITY_CATALOG | NO ACTION | No | PASS |
-| FACILITY_ASSET | catalog_id | FACILITY_CATALOG | NO ACTION | No — preserves asset records | PASS |
-| FACILITY_ASSET | space_code | SPACE | NO ACTION | No — preserves asset location history | PASS |
-| MAINTENANCE | space_code | SPACE | NO ACTION | No — preserves maintenance history | PASS |
-| MAINTENANCE | reporter_id | USER | NO ACTION | No | PASS |
-| MAINTENANCE | assigned_staff_id | USER | SET NULL | No — unassigns without losing record | PASS |
+No CASCADE on delete for any transactional/lifecycle/audit table. **PASS**
 
-All ON DELETE actions are correctly set. No CASCADE vulnerabilities on transactional/lifecycle tables.
+### Data Integrity Constraints
 
-### Foreign Keys — ON UPDATE Evaluation (Natural Key Policy)
+**UNIQUE Constraints:** Present on USER.email, FACILITY_ASSET.asset_tag, APPROVAL.booking_id, USAGE_SESSION.booking_id. **PASS**
 
-| From Table | From Column | To Table | To Column Type | ON UPDATE | Natural Key? | Status |
-|------------|-------------|----------|---------------|-----------|-------------|--------|
-| BOOKING | user_id | USER | Natural (user_id) | NO ACTION | Yes | ⚠️ — user_id is a natural key; CASCADE recommended but acceptable if user IDs are immutable |
-| BOOKING | space_code | SPACE | Natural (space_code) | CASCADE | Yes | PASS |
-| SPACE_FACILITY | space_code | SPACE | Natural (space_code) | CASCADE | Yes | PASS |
-| SPACE_FACILITY | catalog_id | FACILITY_CATALOG | Natural (catalog_id) | CASCADE | Yes | PASS |
-| FACILITY_ASSET | catalog_id | FACILITY_CATALOG | Natural (catalog_id) | CASCADE | Yes | PASS |
-| FACILITY_ASSET | space_code | SPACE | Natural (space_code) | CASCADE | Yes | PASS |
-| MAINTENANCE | space_code | SPACE | Natural (space_code) | CASCADE | Yes | PASS |
-| MAINTENANCE | reporter_id | USER | Natural (user_id) | NO ACTION | Yes | ⚠️ — Same as BOOKING.user_id; accepted if user IDs are immutable |
-| MAINTENANCE | assigned_staff_id | USER | Natural (user_id) | NO ACTION | Yes | ⚠️ — Same note; SET NULL handles deletion so update is less critical |
-| APPROVAL | staff_id | USER | Natural (user_id) | NO ACTION | Yes | ⚠️ — Same as BOOKING.user_id; accepted if user IDs are immutable |
-| USAGE_SESSION | checked_in_by | USER | Natural (user_id) | NO ACTION | Yes | ⚠️ — Same as above |
-| APPROVAL | booking_id | BOOKING | Surrogate (INT IDENTITY) | NO ACTION | No | PASS |
-| USAGE_SESSION | booking_id | BOOKING | Surrogate (INT IDENTITY) | NO ACTION | No | PASS |
+**NOT NULL:** Applied to all mandatory fields as verified in Phase 1. **PASS**
 
-### UNIQUE Constraints
+**DEFAULT:** BOOKING.status lacks DEFAULT 'Pending'. **FAIL**
 
-| Table | Column(s) | Purpose | Status |
-|-------|-----------|---------|--------|
-| USER | email | Ensure unique email | PASS |
-| SPACE | (building, floor, room_number) | Candidate key (natural location) | PASS (listed as CK) |
-| FACILITY_CATALOG | name | Ensure unique facility type name | PASS |
-| FACILITY_ASSET | asset_tag | Ensure unique asset tag (BR-10) | PASS |
-| APPROVAL | booking_id | Enforce 1:1 with BOOKING | PASS |
-| USAGE_SESSION | booking_id | Enforce 1:1 with BOOKING | PASS |
+### Business Logic Constraints
 
-### CHECK Constraints — Chronological Logic
+**CHECK — Domain:**
+- SPACE.capacity > 0 ✓
+- BOOKING.expected_participants > 0 ✓
+- SPACE_FACILITY.quantity > 0 ✓
 
-| Table | Pair | CHECK Expression | Status |
-|-------|------|-----------------|--------|
-| BOOKING | requested_start_time, requested_end_time | requested_end_time > requested_start_time | PASS |
-| USAGE_SESSION | actual_start_time, actual_end_time | actual_end_time IS NULL OR actual_end_time > actual_start_time | PASS |
-| MAINTENANCE | start_time, completion_time | completion_time IS NULL OR completion_time >= start_time | PASS |
+**CHECK — Format/Logic:**
+- No CHECK constraint on USER.email to ensure it contains '@'. **WARNING**
+- No CHECK constraint on USER.phone format. (Acceptable — phone format varies widely)
 
-All chronological pairs covered.
+**CHECK — Chronological (All Pairs):**
 
-### CHECK Constraints — Domain
+| Table | Column Pair | CHECK Exists? | Status |
+|-------|------------|---------------|--------|
+| BOOKING | requested_start, requested_end | CHECK(requested_end > requested_start) | **PASS** |
+| USAGE_SESSION | actual_start, actual_end | CHECK(actual_end IS NULL OR actual_end > actual_start) | **PASS** |
+| MAINTENANCE_RECORD | start_time, completion_time | CHECK(completion_time IS NULL OR completion_time > start_time) | **PASS** |
 
-| Table | Column | CHECK Expression | Status |
-|-------|--------|-----------------|--------|
-| USER | role | IN ('student','lecturer','teaching_assistant','facility_staff','department_administrator','facility_manager') | PASS |
-| USER | account_status | IN ('active','inactive','suspended') | PASS |
-| SPACE | space_type | IN ('auditorium','classroom','computer_laboratory','project_laboratory','meeting_room','student_workspace') | PASS |
-| SPACE | current_status | IN ('available','in_use','under_maintenance','temporarily_closed','retired') | PASS |
-| SPACE | capacity | > 0 | PASS |
-| FACILITY_ASSET | status | IN ('working','damaged','under_repair','retired') | PASS |
-| BOOKING | booking_type | IN ('lecture','examination','seminar','workshop','meeting','student_activity','administrative_event') | PASS |
-| BOOKING | status | IN ('pending','approved','rejected','cancelled','checked_in','completed','no_show') | PASS |
-| BOOKING | expected_participants | > 0 | PASS |
-| APPROVAL | decision | IN ('approved','rejected') | PASS |
-| SPACE_FACILITY | quantity | > 0 | PASS |
-| MAINTENANCE | problem_type | IN ('broken_projector','ac_failure','damaged_furniture','cleaning','network_problem','other') | PASS |
-| MAINTENANCE | status | IN ('reported','in_progress','completed','cancelled') | PASS |
+All chronological pairs validated. **PASS**
 
-### Enum Value Fidelity (Step 1 vs Step 3)
+### Enum Value Fidelity — Side-by-Side Comparison
 
 | Column | Step 1 Values | Step 3 Schema Values | Match? |
 |--------|--------------|---------------------|--------|
-| USER.role | student, lecturer, teaching_assistant, facility_staff, department_administrator, facility_manager | 'student','lecturer','teaching_assistant','facility_staff','department_administrator','facility_manager' | ✅ PASS — exact match |
-| SPACE.space_type | auditorium, classroom, computer_laboratory, project_laboratory, meeting_room, student_workspace | 'auditorium','classroom','computer_laboratory','project_laboratory','meeting_room','student_workspace' | ✅ PASS — exact match |
-| SPACE.current_status | available, in_use, under_maintenance, temporarily_closed, retired | 'available','in_use','under_maintenance','temporarily_closed','retired' | ✅ PASS — exact match |
-| BOOKING.booking_type | lecture, examination, seminar, workshop, meeting, student_activity, administrative_event | 'lecture','examination','seminar','workshop','meeting','student_activity','administrative_event' | ✅ PASS — exact match |
-| BOOKING.status | pending, approved, rejected, cancelled, checked_in, completed, no_show | 'pending','approved','rejected','cancelled','checked_in','completed','no_show' | ✅ PASS — exact match |
-| APPROVAL.decision | (implied: approved, rejected — recorded as assumption A-10) | 'approved','rejected' | ✅ PASS — matches assumption |
-| MAINTENANCE.problem_type | broken_projector, ac_failure, damaged_furniture, cleaning, network_problem, other | 'broken_projector','ac_failure','damaged_furniture','cleaning','network_problem','other' | ✅ PASS — exact match (assumption A-09) |
-| MAINTENANCE.status | reported, in_progress, completed, cancelled | 'reported','in_progress','completed','cancelled' | ✅ PASS — exact match (assumption A-07) |
-| FACILITY_ASSET.status | working, damaged, under_repair, retired | 'working','damaged','under_repair','retired' | ✅ PASS — exact match (assumption A-08) |
-| USER.account_status | active, inactive, suspended | 'active','inactive','suspended' | ✅ PASS — exact match (assumption A-06) |
+| USER.role | Student, Lecturer, TA, Facility Staff, Dept Admin, Facility Manager | 'Student','Lecturer','TA','Facility Staff','Dept Admin','Facility Manager' | **PASS** |
+| USER.account_status | Active, Inactive, Suspended | 'Active','Inactive','Suspended' | **PASS** |
+| SPACE.space_type | Auditorium, Classroom, Computer Lab, Project Lab, Meeting Room, Student Workspace | 'Auditorium','Classroom','Computer Lab','Project Lab','Meeting Room','Student Workspace' | **PASS** |
+| SPACE.current_status | Available, In Use, Under Maintenance, Temporarily Closed, Retired | 'Available','In Use','Under Maintenance','Temporarily Closed','Retired' | **PASS** |
+| BOOKING.purpose | Lecture, Examination, Seminar, Workshop, Meeting, Student Activity, Admin Event | 'Lecture','Examination','Seminar','Workshop','Meeting','Student Activity','Admin Event' | **PASS** |
+| BOOKING.status | Pending, Approved, Rejected, Cancelled, Checked In, Completed, No-show | 'Pending','Approved','Rejected','Cancelled','Checked In','Completed','No-show' | **PASS** |
+| APPROVAL.decision | Approved, Rejected | 'Approved','Rejected' | **PASS** |
+| FACILITY_ASSET.status | Working, Under Repair, Retired | 'Working','Under Repair','Retired' | **PASS** |
+| MAINTENANCE_RECORD.problem_type | Broken Projector, AC Failure, Damaged Furniture, Cleaning, Network Problem | 'Broken Projector','AC Failure','Damaged Furniture','Cleaning','Network Problem' | **PASS** |
+| MAINTENANCE_RECORD.status | Reported, In Progress, Completed, Cancelled | 'Reported','In Progress','Completed','Cancelled' | **PASS** |
+
+All enum values match Step 1 exactly. **PASS**
 
 ---
 
@@ -230,27 +179,26 @@ All chronological pairs covered.
 
 | Category | PASS | DELEGATED_TO_APP | FAIL/GAP |
 |----------|------|-----------------|----------|
-| Entity Mapping | 9/9 | — | — |
-| Weak Entities | N/A | — | — |
-| Relationships (1:1) | 2/2 | — | — |
-| Relationships (1:N) | 11/11 | — | — |
-| Relationships (M:N) | 1/1 | — | — |
-| Business Rules (incl. Assumptions) | 15 | 3 | — |
-| Primary Keys | 9/9 | — | — |
-| Foreign Keys (ON DELETE) | 13/13 | — | — |
-| Foreign Keys (ON UPDATE) | 7/7 (4 ⚠️) | — | — |
-| UNIQUE Constraints | 6/6 | — | — |
-| CHECK Constraints (Domain) | 13/13 | — | — |
-| CHECK Constraints (Chronological) | 3/3 | — | — |
-| Enum Value Fidelity | 10/10 | — | — |
-| Attribute Nullability (Lifecycle) | 23/23 | — | — |
+| Entity Mapping | 9 | 0 | 0 |
+| Weak Entities | N/A | N/A | N/A |
+| Relationships (1:1) | 2 | 0 | 0 |
+| Relationships (1:N) | 10 | 0 | 0 |
+| Relationships (M:N) | 1 | 0 | 0 |
+| Relationships (ISA) | N/A | N/A | N/A |
+| Business Rules | 12 | 3 | 0 |
+| Primary Keys | 9 | 0 | 0 |
+| Foreign Keys | 14 | 0 | 0 |
+| Unique Constraints | 3 | 0 | 0 |
+| CHECK Constraints | 10 | 0 | 1 (DEFAULT) |
+| Chronological Logic | 3 | 0 | 0 |
+
+**Totals:** 73 PASS, 3 DELEGATED_TO_APP, 1 FAIL/GAP
+
+---
 
 ## Recommendations for Remediation
 
 | Failed Phase | Entity/Table/Element | Detected Issue | Exact SQL / Markdown Fix Needed |
-|-------------|---------------------|----------------|--------------------------------|
-| Phase 3 — FK UPDATE | BOOKING.user_id → USER | ON UPDATE NO ACTION on natural-key FK; consider CASCADE if user IDs can change | Optionally change to `ON UPDATE CASCADE` or document that user IDs are immutable |
-| Phase 3 — FK UPDATE | APPROVAL.staff_id → USER | Same — NO ACTION on natural-key FK | Optionally change to `ON UPDATE CASCADE` or document immutability |
-| Phase 3 — FK UPDATE | USAGE_SESSION.checked_in_by → USER | Same — NO ACTION on natural-key FK | Optionally change to `ON UPDATE CASCADE` or document immutability |
-| Phase 3 — FK UPDATE | MAINTENANCE.reporter_id → USER | Same — NO ACTION on natural-key FK | Optionally change to `ON UPDATE CASCADE` or document immutability |
-| Phase 3 — FK UPDATE | MAINTENANCE.assigned_staff_id → USER | Same — NO ACTION on natural-key FK | Optionally change to `ON UPDATE CASCADE` or document immutability |
+|-------------|---------------------|---------------|--------------------------------|
+| Phase 3 — Default Constraints | BOOKING.status | Missing DEFAULT 'Pending' on BOOKING.status — new bookings should default to 'Pending' | Add `DEFAULT 'Pending'` to the BOOKING.status column definition |
+| Phase 3 — Format Validation | USER.email | No CHECK constraint ensuring email contains '@' | Add `CHECK(email LIKE '%@%.%')` (or equivalent SQL Server pattern) — or accept as WARNING since format varies |
