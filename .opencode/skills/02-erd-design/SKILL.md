@@ -42,8 +42,11 @@ Convert the requirement analysis into an ERD with clear entities, relationships,
 
 - **CRITICAL FORMATTING CONSTRAINTS:**
     1. Do NOT include any inline comments (e.g., `%%`) inside the Mermaid diagram code, as this will break the CLI output parser.
-    2. **Key Markers**: Mermaid `erDiagram` natively supports `PK` and `FK` markers. **You MUST prioritize explicitly labeling Foreign Keys using the `FK` marker** to show how tables link together. Use `PK` for primary identifiers. Any other attribute constraints (e.g., UK, Candidate Key) MUST be enclosed in double quotes (e.g., `"UK"`) at the end of the attribute definition.
-
+    2. **Key Markers & Collisions**: Mermaid `erDiagram` natively supports `PK` and `FK` markers, but **does not support stacking both natively on the same attribute**. 
+       - If an attribute serves as BOTH a Primary Key and a Foreign Key, **you MUST prioritize the `PK` marker natively and append the FK inside double quotes** (e.g., `string space_id PK "FK"`). 
+       - For standard foreign keys, use `FK`.
+       - Any other attribute constraints (e.g., UK, Candidate Key) MUST ALSO be enclosed in double quotes (e.g., `"UK"`, `"Candidate Key"`) at the end of the attribute definition.
+    
 - **MODEL CONSTRAINTS**: Do not include:
     1. Pure junction tables (unless they contain specific business attributes, making them Associative Entities).
     2. Database indexes.
