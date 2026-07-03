@@ -23,13 +23,24 @@ You MUST analyze the Foreign Key dependencies in Source 2 and generate `INSERT` 
 * **Phase 2:** Associative or Child Entities (e.g., Space-Facility relations, Physical Assets).
 * **Phase 3:** Transactional Entities (e.g., Bookings, Maintenance Records).
 
-### 2. Data Realism (Zero Dummy Data)
+### 2. Variable Scoping & Batch Execution (CRITICAL)
+* **NO PREMATURE `GO` STATEMENTS:** In T-SQL, variables declared with `DECLARE` are destroyed at the end of a batch (when a `GO` statement is reached). You MUST NOT use `GO` statements to separate your insertion phases if variables from Phase 1 or 2 (e.g., `@Sp1`, `@Stu1`) are required in subsequent phases. Output the entire data population script as a single, continuous batch. You may use `GO` only at the very end of the population script or between isolated `TRY/CATCH` constraint tests.
+
+### 3. Trigger Bypass for Seeding (CRITICAL)
+* **CHICKEN-AND-EGG VALIDATION:** When seeding data into tables that validate against each other via triggers (e.g., `space_facility` validating quantities against `facility_assets`), the trigger will fail because the dependent data does not exist yet. 
+* You MUST wrap the insertion blocks for interdependent tables with `DISABLE TRIGGER` and `ENABLE TRIGGER` commands.
+  * *Example:* `DISABLE TRIGGER TRG_ValidateFacilityQuantity ON dbo.space_facility;`
+    `-- INSERT INTO space_facility...`
+    `-- INSERT INTO facility_assets...`
+    `ENABLE TRIGGER TRG_ValidateFacilityQuantity ON dbo.space_facility;`
+
+### 4. Data Realism (Zero Dummy Data)
 * **Users:** Generate users covering MULTIPLE roles defined in the system. Use realistic international names (e.g., Emily Davis) and university email domains.
 * **Spaces & Assets:** Autogenerate realistic academic spaces (e.g., Alan Turing Auditorium) and valid hardware names.
 * **Timestamps:** Generate logical, chronological dates. End times MUST be strictly greater than start times. Spread bookings across multiple weeks/months — do NOT cluster everything on the same day.
 * **Exact Variables:** You MUST extract and use the EXACT table names, column names, and ENUM values from Source 2. Do not invent column names.
 
-### 3. Minimum Data Volume (MANDATORY)
+### 5. Minimum Data Volume (MANDATORY)
 You MUST generate AT LEAST the following number of rows per table category. These are minimums — generate more if needed:
 * **Users:** At least 15 users, with at least 2 users per role defined in the system.
 * **Spaces:** At least 8 spaces covering ALL space types (classroom, lab, auditorium, meeting room, etc.) and ALL space statuses (available, in use, under maintenance, temporarily closed, retired).
@@ -41,11 +52,11 @@ You MUST generate AT LEAST the following number of rows per table category. Thes
 * **Usage Sessions:** At least 8 session records — include both normal completions and sessions with damage/issue notes.
 * **Maintenance:** At least 6 maintenance records covering ALL maintenance statuses and different problem types.
 
-### 4. Full Enum & Status Coverage (MANDATORY)
+### 6. Full Enum & Status Coverage (MANDATORY)
 * For EVERY column that has a `CHECK IN (...)` constraint, you MUST generate at least one row using EACH allowed value. This ensures every status, type, and category is exercised.
 * **Example:** If `booking.status` allows 7 values, you need at least 7 bookings — one per status value.
 
-### 5. Business-Rule-Driven Data Generation (The Test Suite)
+### 7. Business-Rule-Driven Data Generation (The Test Suite)
 Instead of random inserts, your data MUST explicitly prove that the database design handles the real-world logic.
 * **Analyze:** Read EVERY Business Rule listed in Source 1.
 * **Scenario Generation:** For EACH rule (e.g., overlapping bookings, role constraints, hybrid facility tracking, status lifecycles, maintenance blocks), you MUST purposefully inject specific data records designed to query/test that exact rule. Ensure you include both successful operations (happy paths) and intended edge cases (e.g., a rejected booking, a no-show).
