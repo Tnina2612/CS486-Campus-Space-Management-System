@@ -1,7 +1,7 @@
 ---
 name: 03-logical-design
-description: "Phase 1 Task 3: Logical Database Design. Converts the ERD into a relational schema with relations, attributes, PKs, FKs, and constraints."
-version: 3.0.0
+description: Phase 1 Task 3: Logical Database Design. Converts the ERD into a relational schema with relations, attributes, PKs, FKs, and constraints.
+compatibility: opencode
 ---
 
 # 03-logical-design Skill

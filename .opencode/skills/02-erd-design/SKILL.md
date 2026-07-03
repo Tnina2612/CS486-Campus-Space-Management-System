@@ -1,5 +1,5 @@
 ---
-name: db-design-pipeline-step-02
+name: 02-erd-design
 description: Convert the requirement analysis into a conceptual ERD.
 compatibility: opencode
 ---
