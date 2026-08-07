@@ -5,7 +5,7 @@
 Create:
 
 ```text
-14-data-generator-G<Group number>/
+14-data-generator-G11/
 ```
 
 Generate realistic Phase 2 data for functional testing, analytical queries, and index tuning.
@@ -15,12 +15,12 @@ Generate realistic Phase 2 data for functional testing, analytical queries, and 
 The agent must read and reuse the results of the previous steps:
 
 ```text
-08-requirement-change-analysis-GXX.md
-09-updated-erd-and-logical-design-GXX.md
-10-schema-migration-GXX.sql
-11-concurrency-design-GXX.md
-12-concurrency-implementation-GXX.sql
-13-concurrency-tests-GXX/
+08-requirement-change-analysis-G11.md
+09-updated-erd-and-logical-design-G11.md
+10-schema-migration-G11.sql
+11-concurrency-design-G11.md
+12-concurrency-implementation-G11.sql
+13-concurrency-tests-G11/
 ```
 
 Also read:
@@ -37,7 +37,7 @@ Do not redesign the schema or invent new columns.
 ## Required output
 
 ```text
-14-data-generator-GXX/
+14-data-generator-G11/
 ├── README.md
 ├── config.json
 ├── generate-data.py

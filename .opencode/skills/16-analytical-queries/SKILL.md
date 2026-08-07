@@ -5,7 +5,7 @@
 Create:
 
 ```text
-16-analytical-queries-G<Group number>.sql
+16-analytical-queries-G11.sql
 ```
 
 Implement all mandatory Phase 2 analytical queries.
@@ -15,13 +15,13 @@ Implement all mandatory Phase 2 analytical queries.
 The agent must read and reuse:
 
 ```text
-08-requirement-change-analysis-GXX.md
-09-updated-erd-and-logical-design-GXX.md
-10-schema-migration-GXX.sql
-11-concurrency-design-GXX.md
-12-concurrency-implementation-GXX.sql
-14-data-generator-GXX/
-15-index-tuning-report-GXX.md
+08-requirement-change-analysis-G11.md
+09-updated-erd-and-logical-design-G11.md
+10-schema-migration-G11.sql
+11-concurrency-design-G11.md
+12-concurrency-implementation-G11.sql
+14-data-generator-G11/
+15-index-tuning-report-G11.md
 ```
 
 Also read:
