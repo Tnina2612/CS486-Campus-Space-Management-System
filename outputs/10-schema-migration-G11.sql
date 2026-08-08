@@ -1,209 +1,198 @@
+/*
+================================================================================
+  10-schema-migration-G11.sql
+  Campus Space Management System - Phase 2 Additive Schema Migration
+  Group: G11
+================================================================================
+  POLICY: ADDITIVE-ONLY.
+  This script extends the Phase 1 database (CampusSpaceManagement).
+  - No Phase 1 table is dropped, recreated, or structurally rewritten.
+  - Existing data is preserved. Only backfill UPDATEs for NEW columns are issued.
+  - All changes implement the Phase 2 design in
+    outputs/09-updated-erd-and-logical-design-G11.md
+    with rationale from outputs/08-requirement-change-analysis-G11.md.
+
+  Implements:
+    RC-01  maintenance_records.impact_level        (advisory / out-of-service)
+    RC-03  bookings.advisories_acknowledged,
+           bookings.advisories_snapshot
+    RC-05  spaces.instant_bookable                 (instant-booking eligibility)
+    RC-06  index support for concurrent overlap checks (BR-01)
+================================================================================
+*/
+
 USE [CampusSpaceManagement];
 GO
-
--- ============================================================================
--- Phase 2 Schema Migration - G11
--- ADDITIVE-ONLY. All Phase 1 tables, columns, constraints, and data are
--- preserved. Only ALTER TABLE / ADD / CREATE statements are used below.
--- Implements outputs/09-updated-erd-and-logical-design-G11.md
--- ============================================================================
 
 BEGIN TRANSACTION;
 GO
 
--- ---------------------------------------------------------------------
--- SECTION 1: ALTER existing tables (add columns only)
--- ---------------------------------------------------------------------
+/* ----------------------------------------------------------------------------
+   SECTION 3 - ALTER TABLE / NEW COLUMNS
+---------------------------------------------------------------------------- */
 
--- SPACE: flag for instant (auto) booking support
--- Implements step 9: spaces.allows_instant_booking
-IF NOT EXISTS (SELECT 1 FROM sys.columns
-               WHERE object_id = OBJECT_ID(N'dbo.spaces')
-                 AND name = N'allows_instant_booking')
+-- RC-03: Bookings acknowledge that the requester was informed of active
+--       advisory maintenance on the space at booking time.
+IF NOT EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.bookings')
+      AND name = N'advisories_acknowledged'
+)
 BEGIN
-    ALTER TABLE dbo.spaces
-        ADD allows_instant_booking BIT NOT NULL CONSTRAINT DF_spaces_instant DEFAULT 0;
+    ALTER TABLE dbo.bookings
+        ADD advisories_acknowledged BIT NOT NULL
+            CONSTRAINT DF_bookings_advisories_acknowledged DEFAULT (0);
 END
 GO
 
--- MAINTENANCE_RECORD: impact level (out-of-service / advisory)
-IF NOT EXISTS (SELECT 1 FROM sys.columns
-               WHERE object_id = OBJECT_ID(N'dbo.maintenance_records')
-                 AND name = N'impact_level')
+-- RC-03: Snapshot of the advisory maintenance descriptions shown to the
+--       requester at booking time (audit trail of what was communicated).
+IF NOT EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.bookings')
+      AND name = N'advisories_snapshot'
+)
+BEGIN
+    ALTER TABLE dbo.bookings
+        ADD advisories_snapshot NVARCHAR(MAX) NULL;
+END
+GO
+
+-- RC-01: Maintenance impact level.
+--       'out-of-service' = space cannot be booked (Phase 1 behaviour).
+--       'advisory'       = space bookable but requester must be notified.
+--       Default 'out-of-service' preserves Phase 1 blocking semantics for
+--       pre-existing records (see Section 7 backfill).
+IF NOT EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.maintenance_records')
+      AND name = N'impact_level'
+)
 BEGIN
     ALTER TABLE dbo.maintenance_records
         ADD impact_level NVARCHAR(20) NOT NULL
-            CONSTRAINT DF_maint_impact DEFAULT 'advisory'
-            CONSTRAINT CK_maint_impact CHECK (impact_level IN ('out-of-service', 'advisory'));
+            CONSTRAINT DF_maintenance_records_impact_level
+            DEFAULT ('out-of-service');
 END
 GO
 
--- MAINTENANCE_RECORD: optional link to affected facility type (non-trackable)
-IF NOT EXISTS (SELECT 1 FROM sys.columns
-               WHERE object_id = OBJECT_ID(N'dbo.maintenance_records')
-                 AND name = N'facility_catalog_id')
+/* ----------------------------------------------------------------------------
+   SECTION 4 - NEW CONSTRAINTS
+---------------------------------------------------------------------------- */
+
+-- RC-01: Exact enumeration for impact_level.
+IF NOT EXISTS (
+    SELECT 1 FROM sys.check_constraints
+    WHERE parent_object_id = OBJECT_ID(N'dbo.maintenance_records')
+      AND name = N'CK_maintenance_records_impact_level'
+)
 BEGIN
     ALTER TABLE dbo.maintenance_records
-        ADD facility_catalog_id INT NULL;
+        ADD CONSTRAINT CK_maintenance_records_impact_level
+        CHECK (impact_level IN ('out-of-service', 'advisory'));
 END
 GO
 
--- MAINTENANCE_RECORD: optional link to a specific tracked asset
-IF NOT EXISTS (SELECT 1 FROM sys.columns
-               WHERE object_id = OBJECT_ID(N'dbo.maintenance_records')
-                 AND name = N'facility_asset_id')
+-- RC-05: Space eligible for the instant auto-approval path. Default 0 (off)
+--       so existing spaces are not silently made instant-bookable.
+IF NOT EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.spaces')
+      AND name = N'instant_bookable'
+)
 BEGIN
-    ALTER TABLE dbo.maintenance_records
-        ADD facility_asset_id INT NULL;
+    ALTER TABLE dbo.spaces
+        ADD instant_bookable BIT NOT NULL
+            CONSTRAINT DF_spaces_instant_bookable DEFAULT (0);
 END
 GO
 
--- ---------------------------------------------------------------------
--- SECTION 2: NEW tables
--- ---------------------------------------------------------------------
+/* ----------------------------------------------------------------------------
+   SECTION 5 - INDEXES
+   Support the concurrent overlap check (BR-01 / RC-06) and the new
+   maintenance-availability checks (BR-02 / RC-01).
+---------------------------------------------------------------------------- */
 
--- MAINTENANCE_IMPACT_HISTORY: log of escalate/downgrade changes
-IF OBJECT_ID(N'dbo.maintenance_impact_history', N'U') IS NULL
+-- Overlap check index: finding approved bookings on a space that intersect a
+-- proposed interval. Also enables the serializable range-lock strategy used by
+-- the concurrency implementation (outputs/12-concurrency-implementation-G11.sql).
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.bookings')
+      AND name = N'IX_bookings_space_time'
+)
 BEGIN
-    CREATE TABLE dbo.maintenance_impact_history (
-        history_id     INT           IDENTITY(1,1) PRIMARY KEY,
-        maintenance_id INT           NOT NULL,
-        impact_level   NVARCHAR(20)  NOT NULL CHECK (impact_level IN ('out-of-service', 'advisory')),
-        changed_at     DATETIME2     NOT NULL,
-
-        CONSTRAINT FK_mih_maintenance
-            FOREIGN KEY (maintenance_id)
-            REFERENCES dbo.maintenance_records(maintenance_id)
-            ON UPDATE NO ACTION ON DELETE CASCADE
-    );
+    CREATE INDEX IX_bookings_space_time
+        ON dbo.bookings (space_id, start_time, end_time)
+        INCLUDE (status);
 END
 GO
 
--- ADVISORY_ACKNOWLEDGEMENTS: M:N booking <-> maintenance advisory acknowledgement
-IF OBJECT_ID(N'dbo.advisory_acknowledgements', N'U') IS NULL
+-- Status-led queries (reporting + escalation impact checks) on bookings.
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.bookings')
+      AND name = N'IX_bookings_status_time'
+)
 BEGIN
-    CREATE TABLE dbo.advisory_acknowledgements (
-        acknowledgement_id INT       IDENTITY(1,1) PRIMARY KEY,
-        booking_id         INT       NOT NULL,
-        maintenance_id     INT       NOT NULL,
-        acknowledged_at    DATETIME2 NOT NULL,
-
-        CONSTRAINT UQ_ack_booking_maint UNIQUE (booking_id, maintenance_id),
-
-        CONSTRAINT FK_ack_bookings
-            FOREIGN KEY (booking_id)     REFERENCES dbo.bookings(booking_id)
-            ON UPDATE NO ACTION ON DELETE NO ACTION,
-
-        CONSTRAINT FK_ack_maintenance
-            FOREIGN KEY (maintenance_id) REFERENCES dbo.maintenance_records(maintenance_id)
-            ON UPDATE NO ACTION ON DELETE NO ACTION
-    );
+    CREATE INDEX IX_bookings_status_time
+        ON dbo.bookings (status, start_time, end_time)
+        INCLUDE (space_id);
 END
 GO
 
--- ---------------------------------------------------------------------
--- SECTION 3: NEW Foreign Keys & CHECK constraints on altered tables
--- ---------------------------------------------------------------------
-
--- FK: maintenance_records.facility_catalog_id -> facility_catalog
-IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_maint_records_catalog')
+-- Availability check index: active maintenance records per space with impact
+-- level, for both the booking-time advisory check and escalation queries.
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.maintenance_records')
+      AND name = N'IX_maintenance_records_space_time'
+)
 BEGIN
-    ALTER TABLE dbo.maintenance_records
-        ADD CONSTRAINT FK_maint_records_catalog
-            FOREIGN KEY (facility_catalog_id)
-            REFERENCES dbo.facility_catalog(catalog_id)
-            ON UPDATE NO ACTION ON DELETE NO ACTION;
+    CREATE INDEX IX_maintenance_records_space_time
+        ON dbo.maintenance_records (space_id, start_time, completion_time)
+        INCLUDE (impact_level, status);
 END
 GO
 
--- FK: maintenance_records.facility_asset_id -> facility_assets
-IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_maint_records_asset')
+-- Room-finder support index (RC-09 / report Q3 in 16): capacity filter plus
+-- status filter for the "available spaces" search.
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.spaces')
+      AND name = N'IX_spaces_capacity_status'
+)
 BEGIN
-    ALTER TABLE dbo.maintenance_records
-        ADD CONSTRAINT FK_maint_records_asset
-            FOREIGN KEY (facility_asset_id)
-            REFERENCES dbo.facility_assets(asset_id)
-            ON UPDATE NO ACTION ON DELETE NO ACTION;
+    CREATE INDEX IX_spaces_capacity_status
+        ON dbo.spaces (capacity)
+        INCLUDE (current_status, space_type, space_name);
 END
 GO
 
--- ---------------------------------------------------------------------
--- SECTION 4: Triggers for rules not expressible declaratively
--- ---------------------------------------------------------------------
+/* ----------------------------------------------------------------------------
+   SECTION 7 - DATA BACKFILL (NEW COLUMNS ONLY)
+   - maintenance_records.impact_level: existing records defaulted to
+     'out-of-service' by the column DEFAULT, matching the Phase 1 rule that
+     any maintenance blocked booking. Issued explicitly for clarity.
+   - bookings.advisories_acknowledged: existing bookings defaulted to 0.
+   - bookings.advisories_snapshot: NULL (no pre-recorded advisory context).
+   No existing data is modified or deleted.
+---------------------------------------------------------------------------- */
 
--- 1) XOR + consistency trigger on MAINTENANCE_RECORD facility linkage.
---    A record may link to an asset OR a catalog OR neither (XOR).
---    If an asset is set, its catalog must equal the record's facility_catalog_id.
-IF OBJECT_ID(N'dbo.TRG_Maintenance_Facility_XOR', N'TR') IS NOT NULL
-    DROP TRIGGER dbo.TRG_Maintenance_Facility_XOR;
+UPDATE dbo.maintenance_records
+SET impact_level = 'out-of-service'
+WHERE impact_level IS NULL;  -- defensive; column is NOT NULL
+
+UPDATE dbo.bookings
+SET advisories_acknowledged = 0
+WHERE advisories_acknowledged IS NULL;  -- defensive; column is NOT NULL
+
+-- RC-05: existing spaces defaulted to not instant-bookable (0) by the DEFAULT.
+
 GO
-CREATE TRIGGER dbo.TRG_Maintenance_Facility_XOR
-ON dbo.maintenance_records
-AFTER INSERT, UPDATE
-AS
-BEGIN
-    SET NOCOUNT ON;
-    IF EXISTS (
-        SELECT 1
-        FROM inserted i
-        LEFT JOIN dbo.facility_assets fa ON i.facility_asset_id = fa.asset_id
-        WHERE (i.facility_asset_id IS NOT NULL AND i.facility_catalog_id IS NOT NULL
-                 AND fa.catalog_id <> i.facility_catalog_id)
-    )
-    BEGIN
-        RAISERROR('Maintenance facility link inconsistent: asset catalog must equal facility_catalog_id.', 16, 1);
-        ROLLBACK TRANSACTION;
-        RETURN;
-    END
-END;
-GO
-
--- 2) Maintenance-impact-history helper (optional; see Step 12 stored procedure
---    for the canonical escalation routine that writes history atomically).
-GO
-
--- ---------------------------------------------------------------------
--- SECTION 5: Indexes to support Phase 2 queries
--- ---------------------------------------------------------------------
-
--- Booking conflict / overlap check:
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_bookings_overlap')
-    CREATE INDEX IX_bookings_overlap
-        ON dbo.bookings (space_id, status) INCLUDE (start_time, end_time);
-GO
-
--- Room finder: capacity
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_spaces_capacity')
-    CREATE INDEX IX_spaces_capacity ON dbo.spaces (capacity);
-GO
-
--- Room finder: facility join
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_sf_catalog')
-    CREATE INDEX IX_sf_catalog ON dbo.space_facility (catalog_id, space_id);
-GO
-
--- Maintenance by space + impact level
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_maint_space_impact')
-    CREATE INDEX IX_maint_space_impact
-        ON dbo.maintenance_records (space_id, impact_level)
-        INCLUDE (start_time, completion_time);
-GO
-
--- Reporting: approved hours / weekday-hour
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_bookings_status_start')
-    CREATE INDEX IX_bookings_status_start
-        ON dbo.bookings (status, start_time) INCLUDE (space_id, end_time);
-GO
-
--- ---------------------------------------------------------------------
--- SECTION 6: Optional backfill
--- ---------------------------------------------------------------------
--- No data backfill required: new columns carry defaults (DEFAULT) that
--- satisfy identity and older rows. impact_level defaults to 'advisory'
--- for all existing maintenance records (see assumption A-01/A-03).
 
 COMMIT TRANSACTION;
 GO
 
-PRINT N'Phase 2 migration completed successfully (additive).';
+PRINT 'Phase 2 additive schema migration completed successfully.';
 GO

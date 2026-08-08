@@ -1,15 +1,23 @@
+-- =============================================================================
 -- tx1_instant_booking.sql
--- User instantly books Room A 09:00-11:00. Uses the concurrency-safe procedure.
--- This script is parameterized by the Python runner via pyodbc variables.
-
-DECLARE @new_id INT;
-EXEC dbo.usp_CreateBooking
-    @user_id               = ?,
-    @space_id              = ?,
-    @start_time            = '2026-09-01 09:00',
-    @end_time              = '2026-09-01 11:00',
-    @purpose               = 'Seminar',
-    @expected_participants = 30,
-    @booking_id            = @new_id OUTPUT;
-
-SELECT @new_id AS booking_id;
+-- Simulates USER A instantly booking Room A (space "TEST-ROOM-A")
+-- from 09:00 to 11:00 on the test date.
+--
+-- Placeholders {{USER_ID}}, {{SPACE_ID}}, {{SYSTEM_STAFF_ID}} are replaced by
+-- test_concurrency.py at runtime so the same file stays readable.
+--
+-- Expected behaviour:
+--   * If this transaction wins the race, it commits (returns @booking_id).
+--   * If a concurrent approved booking already overlaps, the procedure raises
+--     error 50002 and the transaction rolls back.
+-- =============================================================================
+EXEC dbo.usp_CreateInstantBooking
+    @user_id               = {{USER_ID}},
+    @space_id              = {{SPACE_ID}},
+    @start_time            = '{{TEST_DATE}} 09:00:00',
+    @end_time              = '{{TEST_DATE}} 11:00:00',
+    @purpose               = N'Seminar',
+    @expected_participants = 10,
+    @system_staff_id       = {{SYSTEM_STAFF_ID}},
+    @booking_id            = NULL;
+GO
