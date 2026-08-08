@@ -1,6 +1,7 @@
 CS486 - Introduction to Database System
 
 # PROJECT
+
 ## Campus Space Management System
 
 ### 1. Business requirement description
@@ -55,7 +56,6 @@ Phase 2 extends the group's Phase 1 database (and agent). Groups must update `AG
 
 ### 3. Required documents
 
-#### 3.2. Group members must submit the following documents in the group folder:
 Update `AGENT.md`, `SKILL.md`, and add:
 * `08-requirement-change-analysis-G11.md`
 * `09-updated-erd-and-logical-design-G11.md`
