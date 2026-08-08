@@ -26,10 +26,18 @@ These additions are mandatory and must be implemented and validated during the p
 1. **SPACE auto-booking flag**
    - Add `SPACE.AutoBookingEnabled` as `BIT NOT NULL`.
    - Set a safe default of `0` (auto-booking disabled by default for existing/new spaces unless explicitly enabled).
+2. **APPROVAL nullable staff assignment for automatic approvals**
+   - Alter `APPROVAL.staff_id` so that it is nullable (`NULL`); it must no longer be defined as `NOT NULL`.
+   - Preserve the existing data and foreign-key relationship/constraint for `staff_id` where applicable.
+   - Ensure the schema migration safely changes the column from `NOT NULL` to `NULL` without losing existing approval records.
+   - For requests that are automatically approved, `APPROVAL.staff_id` must be stored as `NULL`, because no staff member performed the approval.
+   - Manual/staff-approved requests must continue to record the approving staff member in `APPROVAL.staff_id`.
 2. **Automatic approval stored procedure**
    - Create a stored procedure named `sp_AutoApproveBookingRequest` that evaluates a booking request against applicable space usage policy constraints.
    - Approve only when all policy checks pass and the target space has `SPACE.AutoBookingEnabled = 1`.
+   - When the procedure automatically creates or updates the corresponding `APPROVAL` record, it must set `APPROVAL.staff_id = NULL`.
    - If checks fail (including auto-booking disabled), do not auto-approve and return/raise a clear status/error.
+   - Validate that the procedure works correctly with the updated nullable `APPROVAL.staff_id` schema.
 
 ## Workflow Execution Steps
 
