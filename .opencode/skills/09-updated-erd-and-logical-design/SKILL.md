@@ -1,6 +1,6 @@
 ---
 name: 09-updated-erd-and-logical-design
-description: Phase 2 Task 9: Updated ERD and Logical Design. Evolves the Phase 1 conceptual ERD and relational schema to support the Phase 2 requirement changes, additively.
+description: Evolves the Phase 1 conceptual ERD and relational schema to support the Phase 2 requirement changes, additively.
 compatibility: opencode
 ---
 

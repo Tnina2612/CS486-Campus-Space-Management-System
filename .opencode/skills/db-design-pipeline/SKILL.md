@@ -41,7 +41,6 @@ Create or update the following files:
 
 Do not skip any Markdown file.
 
-
 ## Pipeline Execution
 Use the step files as the step-specific entry points.
 

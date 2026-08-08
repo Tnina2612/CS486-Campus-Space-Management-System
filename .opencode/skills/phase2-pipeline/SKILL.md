@@ -11,6 +11,26 @@ compatibility: opencode
 * **NO OVERWRITING:** Do not modify, delete, or overwrite any existing Entity-Relationship Diagrams, logical schemas, or sample data generated during Phase 1.
 * **ADDITIVE CHANGES ONLY:** All Phase 2 modifications must be implemented additively. Use Phase 1 outputs solely as baseline context. Any database schema changes must be written as `ALTER`, `ADD`, or `UPDATE` SQL statements inside the Phase 2 migration scripts. Do not rewrite the original DDL definitions.
 
+## Terminal Execution Autonomy (MANDATORY)
+The agent must independently execute terminal commands when needed and must not require the user to run commands manually.
+
+1. **Schema Inspection:** Use terminal SQL execution (e.g., `sqlcmd` with `SELECT` queries) to inspect existing tables, columns, constraints, and procedures before making changes.
+2. **Database Changes:** Apply migration and implementation SQL by executing the generated `.sql` files from terminal.
+3. **Validation Queries:** Run terminal SQL checks after migration/implementation (e.g., verify column existence/defaults, procedure existence, and key behavioral checks).
+4. **Python Execution:** Run Python files/scripts from terminal for concurrency tests and data-generation validation (e.g., `python outputs/13-concurrency-tests-G11/test_concurrency.py`).
+5. **Verification Evidence:** Confirm command outcomes in the workflow narrative (success/failure and what was verified). If a command fails, fix the issue and re-run validation.
+
+## Required Phase 2 Database Additions
+These additions are mandatory and must be implemented and validated during the pipeline:
+
+1. **SPACE auto-booking flag**
+   - Add `SPACE.AutoBookingEnabled` as `BIT NOT NULL`.
+   - Set a safe default of `0` (auto-booking disabled by default for existing/new spaces unless explicitly enabled).
+2. **Automatic approval stored procedure**
+   - Create a stored procedure named `sp_AutoApproveBookingRequest` that evaluates a booking request against applicable space usage policy constraints.
+   - Approve only when all policy checks pass and the target space has `SPACE.AutoBookingEnabled = 1`.
+   - If checks fail (including auto-booking disabled), do not auto-approve and return/raise a clear status/error.
+
 ## Workflow Execution Steps
 
 The agent must execute the following steps in exact order. Do not proceed to the next step until the current step's output has been successfully generated and verified.
@@ -27,7 +47,8 @@ The agent must execute the following steps in exact order. Do not proceed to the
 
 ### Step 3: Schema Migration
 * **Trigger Skill:** `10-schema-migration`
-* **Output:** Generate `outputs/10-schema-migration-G11.sql` containing safe `ALTER TABLE` commands.
+* **Output:** Generate `outputs/10-schema-migration-G11.sql` containing safe `ALTER TABLE` commands, including adding `SPACE.AutoBookingEnabled BIT NOT NULL DEFAULT (0)`.
+* **Execution:** Apply the migration SQL in terminal, then run validation queries to confirm the new column, nullability, and default constraint are present.
 
 ### Step 4: Concurrency Strategy
 * **Trigger Skill:** `11-concurrency-design`
@@ -35,15 +56,18 @@ The agent must execute the following steps in exact order. Do not proceed to the
 
 ### Step 5: Concurrency Implementation
 * **Trigger Skill:** `12-concurrency-implementation`
-* **Output:** Generate `outputs/12-concurrency-implementation-G11.sql` with the transaction wrappers/functions.
+* **Output:** Generate `outputs/12-concurrency-implementation-G11.sql` with the transaction wrappers/functions, including `sp_AutoApproveBookingRequest`.
+* **Execution:** Execute the SQL file in terminal and verify the procedure exists and enforces both policy checks and `SPACE.AutoBookingEnabled`.
 
 ### Step 6: Concurrency Testing
 * **Trigger Skill:** `13-concurrency-tests`
 * **Output:** Populate the `outputs/13-concurrency-tests-G11/` directory with SQL transaction files, a Python test script (`test_concurrency.py`), and a `README.md`.
+* **Execution:** Run the test SQL/Python scripts in terminal and confirm auto-approval behavior is correct for both enabled and disabled auto-booking spaces.
 
 ### Step 7: Large-Scale Data Generation
 * **Trigger Skill:** `14-data-generator`
 * **Output:** Populate the `outputs/14-data-generator-G11/` directory with a Python seeder script (`generate_data.py`), `requirements.txt`, and instructions to generate 100,000+ records.
+* **Execution:** Execute the Python generator from terminal and validate inserted data via SQL count/check queries.
 
 ### Step 8: Analytical Queries
 * **Trigger Skill:** `16-analytical-queries`

@@ -1,6 +1,6 @@
 ---
 name: 10-schema-migration
-description: Phase 2 Task 10: Schema Migration. Implements the updated logical design on top of the existing Phase 1 database using additive SQL, preserving existing data.
+description: Implements the updated logical design on top of the existing Phase 1 database using additive SQL, preserving existing data.
 compatibility: opencode
 ---
 

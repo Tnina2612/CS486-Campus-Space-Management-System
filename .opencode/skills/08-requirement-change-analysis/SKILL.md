@@ -1,6 +1,6 @@
 ---
 name: 08-requirement-change-analysis
-description: Phase 2 Task 8: Requirement Change Analysis. Identifies what changes in the business requirement, which entities/relationships/business rules are affected, and the concurrency conflicts that may arise.
+description: Identifies what changes in the business requirement, which entities/relationships/business rules are affected, and the concurrency conflicts that may arise.
 compatibility: opencode
 ---
 
