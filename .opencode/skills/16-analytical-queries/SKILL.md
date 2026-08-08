@@ -41,49 +41,45 @@ Do not invent table or column names.
 
 For a given semester, return:
 
-- Space ID
-- Space code
-- Space name
-- Approved booking count
-- Total approved booking hours
+* Space ID
+* Space code
+* Space name
+* Approved booking count
+* Total approved booking hours
 
 Include only statuses that represent approved occupancy according to the existing design.
 
 Prefer including spaces with zero hours.
 
----
-
 ### Query 2 — Approved bookings by weekday and hour
 
 For a given semester, return:
 
-- Weekday number
-- Weekday name
-- Hour
-- Approved booking count
+* Weekday number
+* Weekday name
+* Hour
+* Approved booking count
 
 Use a stable Monday-to-Sunday order.
 
 Document whether grouping is based on booking start time.
 
----
-
 ### Query 3 — Room finder
 
 Given:
 
-- Requested start time
-- Requested end time
-- Minimum capacity
-- Required facility list
+* Requested start time
+* Requested end time
+* Minimum capacity
+* Required facility list
 
 Return spaces that:
 
-- Are bookable
-- Have sufficient capacity
-- Have every requested facility
-- Have no overlapping approved booking
-- Have no overlapping out-of-service maintenance
+* Are bookable
+* Have sufficient capacity
+* Have every requested facility
+* Have no overlapping approved booking
+* Have no overlapping out-of-service maintenance
 
 Advisory maintenance must not block the space.
 
@@ -91,15 +87,13 @@ When the required facility list is empty, all otherwise valid spaces should pass
 
 Return each space once.
 
----
-
 ### Query 4 — Bookings affected by maintenance escalation
 
 Given a maintenance record ID, return approved bookings that:
 
-- Use the same space
-- Overlap the maintenance period
-- Are affected after escalation to out-of-service
+* Use the same space
+* Overlap the maintenance period
+* Are affected after escalation to out-of-service
 
 Include requester contact information needed by staff.
 
@@ -123,17 +117,25 @@ Do not use `BETWEEN` as the general overlap test.
 
 Do not assume that only the literal status `approved` counts. Reuse the approved-status definition from the previous design.
 
+### SQL batch variables
+
+Each query must be independently executable.
+
+Declare all variables required by a query inside that query's own SQL batch. Do not reuse variable declarations from previous queries or across `GO` statements.
+
+Apply the same rule to test cases and table variables.
+
 ## File requirements
 
 For each query include:
 
-- Business-question comment
-- Target-user comment
-- Input parameters
-- SQL statement
-- Assumptions
-- Test execution example
-- Expected-result explanation
+* Business-question comment
+* Target-user comment
+* Input parameters
+* SQL statement
+* Assumptions
+* Test execution example
+* Expected-result explanation
 
 Use DBMS-specific syntax and keep predicates suitable for the indexes defined in deliverable 15.
 
@@ -141,16 +143,21 @@ Use DBMS-specific syntax and keep predicates suitable for the indexes defined in
 
 At minimum, test:
 
-- Semester boundaries
-- Cancelled and rejected bookings
-- Adjacent non-overlapping periods
-- Empty facility list
-- Room missing one required facility
-- Advisory maintenance
-- Out-of-service maintenance
-- Open maintenance period
-- Booking in another space
+* Semester boundaries
+* Cancelled and rejected bookings
+* Adjacent non-overlapping periods
+* Empty facility list
+* Room missing one required facility
+* Advisory maintenance
+* Out-of-service maintenance
+* Open maintenance period
+* Booking in another space
 
 ## Completion condition
 
-Finish only when all four queries execute on the generated dataset, return correct boundary-case results, and are compatible with the planned index analysis.
+Finish only when:
+
+* All four queries execute correctly on the generated dataset.
+* Boundary cases return correct results.
+* Queries are compatible with the planned index analysis.
+* Each query can execute independently without depending on variables or temporary state from another query.
