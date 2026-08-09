@@ -1,4 +1,10 @@
-# Skill 16 — Generate Phase 2 Analytical Queries
+---
+name: 16-analytical-queries
+description: Produce the mandatory Phase 2 analytical SQL queries for reporting and performance analysis.
+compatibility: opencode
+---
+
+# Skill: Generate Phase 2 Analytical Queries
 
 ## Goal
 

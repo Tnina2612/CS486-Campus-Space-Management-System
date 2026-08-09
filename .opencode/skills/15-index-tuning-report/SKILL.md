@@ -4,7 +4,7 @@ description: Tune critical queries by adding indexes and compare execution plans
 compatibility: opencode
 ---
 
-# Step 15 - Index Tuning Report
+# Skill: Index Tuning Report
 
 ## Objective
 Identify, implement, and evaluate optimal Microsoft SQL Server indexes for four critical database queries:

@@ -1,6 +1,6 @@
 ---
 name: phase2-pipeline
-description: This pipeline orchestrates the automated execution of Phase 2 for the Campus Space Management System. It sequentially triggers skills `08` through `16` to handle requirement changes, schema migrations, concurrency control, large-scale data generation, and performance tuning
+description: This pipeline orchestrates the automated execution of Phase 2 for the Campus Space Management System. It sequentially triggers skills `08` through `16` to handle requirement changes, schema migrations, concurrency control, large-scale data generation, and performance tuning.
 compatibility: opencode
 ---
 

@@ -10,14 +10,15 @@ with **100,000+ records** so the analytical queries
 | Table | Default volume | Notes |
 | :--- | :--- | :--- |
 | `users` | 3,000 | roles weighted toward Students; unique `gen.user.*@campus.edu` emails |
-| `spaces` | 400 | 8 space types, unique `GEN-*` codes, Phase 2 `instant_bookable` (RC-05) |
-| `facility_catalog` | 20 | mix of trackable / non-trackable facilities |
+| `spaces` | 400 | 8 space types, unique `GEN-*` codes, Phase 2 `AutoBookingEnabled` (RC-05) |
+| `facility_catalog` | 20 (idempotent) | mix of trackable / non-trackable facilities; names already present are not re-inserted |
 | `facility_assets` | ~1,000 | assets inserted **before** `space_facility` so the `TRG_ValidateFacilityQuantity` trigger (trackable quantity ≤ asset count) never fires |
 | `space_facility` | ~1,800 | trackable quantity == asset count (trigger-safe) |
-| `bookings` | 100,000 | scheduled on a **non-overlapping per-space time grid** so BR-01 (no double-booking) holds; Phase 2 advisory fields (RC-03) |
+| `maintenance_records` | 8,000 | mixed `advisory` / `out-of-service` impact levels (RC-01) |
+| `bookings` | 100,000 | scheduled on a **non-overlapping per-space time grid** (BR-01) that **avoids out-of-service maintenance windows** (RC-01); Phase 2 advisory flags/snapshots (RC-03) |
+| `advisory_acknowledgements` | ~1,000+ | RC-03: one row per (booking, advisory maintenance) pair actually acknowledged |
 | `approvals` | ~83,000 | one per decided booking; rejection reasons for `Rejected` |
 | `usage_sessions` | ~40,000 | only for `Checked In` / `Completed` bookings |
-| `maintenance_records` | 8,000 | mixed `advisory` / `out-of-service` impact levels (RC-01) |
 
 Total ≈ 235,000+ rows (bookings alone exceed 100,000).
 
@@ -62,9 +63,24 @@ python outputs/14-data-generator-G11/generate_data.py --bookings 100000
 | `--bookings` | `100000` | number of bookings (drives the 100,000+ requirement) |
 | `--maintenance` | `8000` | number of maintenance records |
 | `--seed` | `11` | random seed for reproducible data |
+| `--batch-size` | `5000` | `executemany` batch size |
+| `--reset` | off | delete previously generated rows first (reverse FK order), then reseed |
 
-The script is **re-runnable**: it records the identity baselines before
-inserting, so running it twice appends rather than colliding on UNIQUE keys.
+Defaults come from `config.json` when present; command-line flags override it.
+
+## Validate and summarise
+
+```powershell
+sqlcmd -S localhost -d CampusSpaceManagement -C -i outputs/14-data-generator-G11/validation.sql
+sqlcmd -S localhost -d CampusSpaceManagement -C -i outputs/14-data-generator-G11/summary.sql
+```
+
+`validation.sql` must report **0 invalid rows** for every check (orphan FKs,
+duplicate keys, bad chronology, status/value domains, BR-01 overlapping
+approved bookings, BR-02/RC-01 approved booking over out-of-service
+maintenance, RC-03 acknowledgement consistency, RC-05 flag validity).
+`summary.sql` prints record counts, status/category distributions, date
+coverage and Phase 2 data coverage.
 
 ## Environment variables
 
@@ -74,19 +90,37 @@ inserting, so running it twice appends rather than colliding on UNIQUE keys.
 | `MSSQL_DATABASE` | `CampusSpaceManagement` | Target database |
 | `MSSQL_USER` | `sa` | Login (ignored with Windows auth) |
 | `MSSQL_PASSWORD` | `YourStrong!Passw0rd` | Password |
-| `MSSQL_DRIVER` | `ODBC Driver 17 for SQL Server` | ODBC driver name |
+| `MSSQL_DRIVER` | `ODBC Driver 18 for SQL Server` | ODBC driver name |
 | `MSSQL_WINDOWS_AUTH` | `0` | Set `1` to use `Trusted_Connection` |
+
+## Reset / re-run behaviour
+
+* The generator is **re-runnable**: it records identity baselines before
+  inserting, so running it twice appends rather than colliding on UNIQUE keys
+  (users `gen.user.*@campus.edu`, spaces `GEN-*`, assets `GEN-*`).
+* To rebuild the synthetic dataset from scratch, run with `--reset`. It
+  deletes generator-marked rows in reverse foreign-key order (acknowledgements
+  → approvals → sessions → bookings → maintenance → space_facility → assets →
+  spaces → users, plus generator-only catalog rows that are unreferenced) and
+  then reseeds. **Phase 1 sample data is preserved**.
+* If Phase 1 data must be kept untouched, simply omit `--reset`; the generator
+  appends new rows with new ids.
 
 ## Design guarantees
 
 - **No double-booking (BR-01):** every space gets a disjoint set of time slots
   (all `(day, start-hour)` combinations visited exactly once), so no two
   bookings on one space overlap.
+- **Out-of-service maintenance blocks bookings (RC-01):** grid slots that
+  overlap an `out-of-service` maintenance window are excluded.
+- **Advisory maintenance recorded (RC-03):** bookings overlapping an `advisory`
+  window are flagged `advisory_acknowledged = 1`, store a snapshot, and create
+  `advisory_acknowledgements` rows for each overlapping advisory.
 - **Trigger-safe facilities:** physical assets are created before the
   `space_facility` rows that reference them.
-- **Phase 2 columns populated:** `spaces.instant_bookable` (RC-05),
-  `bookings.advisories_acknowledged` / `advisories_snapshot` (RC-03),
-  `maintenance_records.impact_level` (RC-01).
+- **Phase 2 columns populated:** `spaces.AutoBookingEnabled` (RC-05),
+  `bookings.advisory_acknowledged` / `advisory_snapshot` (RC-03),
+  `maintenance_records.impact_level` (RC-01), `advisory_acknowledgements`.
 
 ## Verification
 

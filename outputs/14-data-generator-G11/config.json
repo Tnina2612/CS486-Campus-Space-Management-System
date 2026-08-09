@@ -1,0 +1,8 @@
+{
+  "seed": 11,
+  "users": 3000,
+  "spaces": 600,
+  "bookings": 100000,
+  "maintenance": 8000,
+  "batch_size": 5000
+}

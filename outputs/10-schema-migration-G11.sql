@@ -1,9 +1,9 @@
 /*
-================================================================================
+===============================================================================
   10-schema-migration-G11.sql
   Campus Space Management System - Phase 2 Additive Schema Migration
   Group: G11
-================================================================================
+===============================================================================
   POLICY: ADDITIVE-ONLY.
   This script extends the Phase 1 database (CampusSpaceManagement).
   - No Phase 1 table is dropped, recreated, or structurally rewritten.
@@ -11,14 +11,19 @@
   - All changes implement the Phase 2 design in
     outputs/09-updated-erd-and-logical-design-G11.md
     with rationale from outputs/08-requirement-change-analysis-G11.md.
+  - Every statement is guarded with IF NOT EXISTS / OBJECT_ID checks so the
+    script is IDEMPOTENT and safe to re-run against an already-partially-migrated
+    database.
 
   Implements:
     RC-01  maintenance_records.impact_level        (advisory / out-of-service)
-    RC-03  bookings.advisories_acknowledged,
-           bookings.advisories_snapshot
-    RC-05  spaces.instant_bookable                 (instant-booking eligibility)
+    RC-03  bookings.advisory_acknowledged,
+           bookings.advisory_snapshot
+    RC-03  advisory_acknowledgements (NEW table)
+    RC-05  spaces.AutoBookingEnabled               (automatic-approval gate)
+    RC-05a approvals.staff_id NOT NULL -> NULL      (automatic approvals)
     RC-06  index support for concurrent overlap checks (BR-01)
-================================================================================
+===============================================================================
 */
 
 USE [CampusSpaceManagement];
@@ -28,20 +33,51 @@ BEGIN TRANSACTION;
 GO
 
 /* ----------------------------------------------------------------------------
+   SECTION 2 - NEW TABLES
+--------------------------------------------------------------------------- */
+
+-- RC-03 / BR-P2-01: per-booking acknowledgement of a specific advisory
+-- maintenance record. UNIQUE (booking_id, maintenance_id) enforces that each
+-- advisory is acknowledged at most once per booking.
+IF OBJECT_ID(N'dbo.advisory_acknowledgements', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.advisory_acknowledgements (
+        acknowledgement_id INT           IDENTITY(1,1) PRIMARY KEY,
+        booking_id         INT           NOT NULL,
+        maintenance_id     INT           NOT NULL,
+        acknowledged_by    INT           NOT NULL,
+        acknowledged_at    DATETIME2     NOT NULL DEFAULT (SYSDATETIME()),
+
+        CONSTRAINT UQ_acknowledgements_booking_maint UNIQUE (booking_id, maintenance_id),
+
+        CONSTRAINT FK_acknowledgements_bookings
+            FOREIGN KEY (booking_id) REFERENCES dbo.bookings(booking_id)
+            ON UPDATE NO ACTION ON DELETE NO ACTION,
+        CONSTRAINT FK_acknowledgements_maintenance
+            FOREIGN KEY (maintenance_id) REFERENCES dbo.maintenance_records(maintenance_id)
+            ON UPDATE NO ACTION ON DELETE NO ACTION,
+        CONSTRAINT FK_acknowledgements_users
+            FOREIGN KEY (acknowledged_by) REFERENCES dbo.users(user_id)
+            ON UPDATE NO ACTION ON DELETE NO ACTION
+    );
+END
+GO
+
+/* ----------------------------------------------------------------------------
    SECTION 3 - ALTER TABLE / NEW COLUMNS
----------------------------------------------------------------------------- */
+--------------------------------------------------------------------------- */
 
 -- RC-03: Bookings acknowledge that the requester was informed of active
 --       advisory maintenance on the space at booking time.
 IF NOT EXISTS (
     SELECT 1 FROM sys.columns
     WHERE object_id = OBJECT_ID(N'dbo.bookings')
-      AND name = N'advisories_acknowledged'
+      AND name = N'advisory_acknowledged'
 )
 BEGIN
     ALTER TABLE dbo.bookings
-        ADD advisories_acknowledged BIT NOT NULL
-            CONSTRAINT DF_bookings_advisories_acknowledged DEFAULT (0);
+        ADD advisory_acknowledged BIT NOT NULL
+            CONSTRAINT DF_bookings_advisory_acknowledged DEFAULT (0);
 END
 GO
 
@@ -50,11 +86,11 @@ GO
 IF NOT EXISTS (
     SELECT 1 FROM sys.columns
     WHERE object_id = OBJECT_ID(N'dbo.bookings')
-      AND name = N'advisories_snapshot'
+      AND name = N'advisory_snapshot'
 )
 BEGIN
     ALTER TABLE dbo.bookings
-        ADD advisories_snapshot NVARCHAR(MAX) NULL;
+        ADD advisory_snapshot NVARCHAR(MAX) NULL;
 END
 GO
 
@@ -76,9 +112,39 @@ BEGIN
 END
 GO
 
+-- RC-05 / A-08: Space eligible for the automatic approval path.
+--       Default 0 (off) so existing spaces are not silently made auto-bookable.
+IF NOT EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.spaces')
+      AND name = N'AutoBookingEnabled'
+)
+BEGIN
+    ALTER TABLE dbo.spaces
+        ADD AutoBookingEnabled BIT NOT NULL
+            CONSTRAINT DF_spaces_AutoBookingEnabled DEFAULT (0);
+END
+GO
+
+-- RC-05a: APPROVAL.staff_id becomes NULLABLE so that automatic approvals can be
+--       recorded with staff_id = NULL (no human actor performed the decision).
+--       Manual/staff approvals continue to record the deciding staff member.
+--       The FK to users(user_id) is preserved; existing approval rows are kept
+--       intact (data-preserving relaxation of NOT NULL).
+IF EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.approvals')
+      AND name = N'staff_id'
+      AND is_nullable = 0
+)
+BEGIN
+    ALTER TABLE dbo.approvals ALTER COLUMN staff_id INT NULL;
+END
+GO
+
 /* ----------------------------------------------------------------------------
-   SECTION 4 - NEW CONSTRAINTS
----------------------------------------------------------------------------- */
+   SECTION 4 - NEW CONSTRAINTS & FOREIGN KEYS
+--------------------------------------------------------------------------- */
 
 -- RC-01: Exact enumeration for impact_level.
 IF NOT EXISTS (
@@ -93,17 +159,16 @@ BEGIN
 END
 GO
 
--- RC-05: Space eligible for the instant auto-approval path. Default 0 (off)
---       so existing spaces are not silently made instant-bookable.
+-- RC-03: Boolean domain check for the acknowledgement flag.
 IF NOT EXISTS (
-    SELECT 1 FROM sys.columns
-    WHERE object_id = OBJECT_ID(N'dbo.spaces')
-      AND name = N'instant_bookable'
+    SELECT 1 FROM sys.check_constraints
+    WHERE parent_object_id = OBJECT_ID(N'dbo.bookings')
+      AND name = N'CK_bookings_advisory_acknowledged'
 )
 BEGIN
-    ALTER TABLE dbo.spaces
-        ADD instant_bookable BIT NOT NULL
-            CONSTRAINT DF_spaces_instant_bookable DEFAULT (0);
+    ALTER TABLE dbo.bookings
+        ADD CONSTRAINT CK_bookings_advisory_acknowledged
+        CHECK (advisory_acknowledged IN (0, 1));
 END
 GO
 
@@ -111,7 +176,7 @@ GO
    SECTION 5 - INDEXES
    Support the concurrent overlap check (BR-01 / RC-06) and the new
    maintenance-availability checks (BR-02 / RC-01).
----------------------------------------------------------------------------- */
+--------------------------------------------------------------------------- */
 
 -- Overlap check index: finding approved bookings on a space that intersect a
 -- proposed interval. Also enables the serializable range-lock strategy used by
@@ -169,25 +234,44 @@ BEGIN
 END
 GO
 
+-- Acknowledgement history lookup per booking / maintenance record.
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.advisory_acknowledgements')
+      AND name = N'IX_advisory_ack_booking'
+)
+BEGIN
+    CREATE INDEX IX_advisory_ack_booking
+        ON dbo.advisory_acknowledgements (booking_id)
+        INCLUDE (maintenance_id, acknowledged_by, acknowledged_at);
+END
+GO
+
 /* ----------------------------------------------------------------------------
    SECTION 7 - DATA BACKFILL (NEW COLUMNS ONLY)
    - maintenance_records.impact_level: existing records defaulted to
      'out-of-service' by the column DEFAULT, matching the Phase 1 rule that
      any maintenance blocked booking. Issued explicitly for clarity.
-   - bookings.advisories_acknowledged: existing bookings defaulted to 0.
-   - bookings.advisories_snapshot: NULL (no pre-recorded advisory context).
+   - bookings.advisory_acknowledged: existing bookings defaulted to 0.
+   - bookings.advisory_snapshot: NULL (no pre-recorded advisory context).
+   - spaces.AutoBookingEnabled: existing spaces defaulted to 0 (auto-approval
+     is opt-in only; never silently enabled).
+   - approvals.staff_id: no backfill needed. Existing rows keep their recorded
+     staff member. NULL is reserved for future automatic approvals (RC-05a).
    No existing data is modified or deleted.
----------------------------------------------------------------------------- */
+--------------------------------------------------------------------------- */
 
 UPDATE dbo.maintenance_records
 SET impact_level = 'out-of-service'
 WHERE impact_level IS NULL;  -- defensive; column is NOT NULL
 
 UPDATE dbo.bookings
-SET advisories_acknowledged = 0
-WHERE advisories_acknowledged IS NULL;  -- defensive; column is NOT NULL
+SET advisory_acknowledged = 0
+WHERE advisory_acknowledged IS NULL;  -- defensive; column is NOT NULL
 
--- RC-05: existing spaces defaulted to not instant-bookable (0) by the DEFAULT.
+UPDATE dbo.spaces
+SET AutoBookingEnabled = 0
+WHERE AutoBookingEnabled IS NULL;  -- defensive; column is NOT NULL
 
 GO
 

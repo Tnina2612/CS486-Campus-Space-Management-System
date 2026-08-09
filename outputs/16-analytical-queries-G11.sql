@@ -7,7 +7,7 @@
   Implements the four Phase 2 reporting requirements RC-07 .. RC-10
   (see outputs/08-requirement-change-analysis-G11.md):
 
-    Q1  Approved booking hours by sp/exitace for a semester        (RC-07)
+    Q1  Approved booking hours by space for a semester            (RC-07)
     Q2  Approved bookings by weekday and hour for a semester  (RC-08)
     Q3  Room finder (capacity + required facilities + time)   (RC-09)
     Q4  Bookings affected by maintenance escalation           (RC-10)
@@ -306,8 +306,8 @@ GO
        (strict half-open overlap rule); adjacent (touching) periods are NOT
        affected.
      * The query is typically executed right after the escalation UPDATE in
-       dbo.usp_UpdateMaintenanceImpactLevel (outputs/12), and returns the same
-       affected set that procedure reports, plus full contact information.
+        dbo.sp_set_maintenance_impact (outputs/12), and returns the same
+        affected set that procedure reports, plus full contact information.
      * "Affected after escalation to out-of-service" is driven by the
        maintenance period, not by the booking status history.
 

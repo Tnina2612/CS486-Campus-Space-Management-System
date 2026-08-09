@@ -1,3 +1,9 @@
+---
+name: 14-data-generator
+description: Generate realistic and reproducible mock data for Phase 2 testing, analytical queries, and performance evaluation.
+compatibility: opencode
+---
+
 # Skill 14 — Generate Phase 2 Data
 
 ## Goal

@@ -1,291 +1,360 @@
 /*
-================================================================================
+===============================================================================
   12-concurrency-implementation-G11.sql
   Campus Space Management System - Phase 2 Concurrency Implementation
   Group: G11
-================================================================================
-  Implements the pessimistic locking strategy from outputs/11-concurrency-design-G11.md
-  for the CampusSpaceManagement database (after applying outputs/10-schema-migration-G11.sql).
+===============================================================================
+  PURPOSE:
+    Translates the concurrency design (outputs/11-concurrency-design-G11.md)
+    into executable T-SQL. Implements Strategy B (pessimistic locking with
+    UPDLOCK + HOLDLOCK) inside stored procedures so that:
 
-  Procedures:
-    usp_CreateInstantBooking   -- auto-approve path (RC-05), guards BR-01/BR-02
-    usp_ApproveBooking         -- staff approval path, guards BR-01/BR-02/BR-03
-    usp_RejectBooking          -- staff rejection path (BR-04)
-    usp_UpdateMaintenanceImpactLevel -- escalation/downgrade (RC-04), guards C2/C4
-================================================================================
+    BR-01  No two approved bookings may overlap on the same space.
+    BR-02  A space with overlapping out-of-service maintenance (or a closed /
+           retired / under-maintenance space) cannot be booked.
+    BR-P2-03 Automatic approval is granted ONLY when every policy check passes
+           AND the target space has SPACE.AutoBookingEnabled = 1.
+    RC-03  Advisory maintenance is surfaced to the requester and acknowledged.
+
+  MANDATORY DELIVERABLE: sp_AutoApproveBookingRequest
+    - evaluates a booking request against the space usage policy constraints,
+    - auto-approves ONLY when all checks pass AND AutoBookingEnabled = 1,
+    - on any failure (including auto-booking disabled) does NOT auto-approve
+      and returns a clear status via an OUTPUT parameter.
+
+  All objects are created with CREATE OR ALTER so the script is idempotent
+  and safe to re-run.
+===============================================================================
 */
 
 USE [CampusSpaceManagement];
 GO
 
 /* ----------------------------------------------------------------------------
-   Drop-first guards so the script is idempotent.
----------------------------------------------------------------------------- */
-IF OBJECT_ID(N'dbo.usp_CreateInstantBooking', N'P') IS NOT NULL DROP PROCEDURE dbo.usp_CreateInstantBooking;
-IF OBJECT_ID(N'dbo.usp_ApproveBooking', N'P') IS NOT NULL          DROP PROCEDURE dbo.usp_ApproveBooking;
-IF OBJECT_ID(N'dbo.usp_RejectBooking', N'P') IS NOT NULL           DROP PROCEDURE dbo.usp_RejectBooking;
-IF OBJECT_ID(N'dbo.usp_UpdateMaintenanceImpactLevel', N'P') IS NOT NULL DROP PROCEDURE dbo.usp_UpdateMaintenanceImpactLevel;
+   HELPER - active out-of-service maintenance overlapping a window
+   Returns maintenance records of the space that are open and
+   impact_level = 'out-of-service' and overlap [@start, @end].
+--------------------------------------------------------------------------- */
+IF OBJECT_ID(N'dbo.fn_active_out_of_service', N'IF') IS NULL
+BEGIN
+    EXEC (N'
+    CREATE FUNCTION dbo.fn_active_out_of_service (
+        @space_id INT,
+        @start    DATETIME2,
+        @end      DATETIME2
+    )
+    RETURNS TABLE
+    AS
+    RETURN
+    (
+        SELECT m.maintenance_id
+        FROM dbo.maintenance_records m
+        WHERE m.space_id = @space_id
+          AND m.impact_level = ''out-of-service''
+          AND m.status NOT IN (''Completed'', ''Cancelled'')
+          AND m.start_time < @end
+          AND (m.completion_time IS NULL OR m.completion_time > @start)
+    );
+    ');
+END
 GO
 
 /* ----------------------------------------------------------------------------
-   PROCEDURE: usp_CreateInstantBooking
-   Creates a booking and auto-approves it in one atomic transaction.
-   SERIALIZATION POINT: guarded overlap scan with WITH (UPDLOCK, HOLDLOCK)
-   against index IX_bookings_space_time (space_id, start_time, end_time).
----------------------------------------------------------------------------- */
-CREATE PROCEDURE dbo.usp_CreateInstantBooking
-    @user_id               INT,
-    @space_id              INT,
-    @start_time            DATETIME2,
-    @end_time              DATETIME2,
-    @purpose               NVARCHAR(50),
-    @expected_participants INT = NULL,
-    @system_staff_id       INT,           -- sentinel staff user id used for auto-approval audit
-    @booking_id            INT = NULL OUTPUT
+   PROCEDURE 1 (MANDATORY): sp_AutoApproveBookingRequest
+   ----------------------------------------------------------------------------
+   Automatic booking + approval for a selected space.
+   - Returns @result_status:
+       'AUTO_APPROVED'        -> booking created and approved.
+       'AUTO_BOOKING_DISABLED'-> space exists but AutoBookingEnabled = 0
+                                 (must NOT be auto-approved; staff path only).
+       'SPACE_NOT_FOUND'      -> no such space.
+       'SPACE_UNAVAILABLE'    -> space closed / retired / under maintenance.
+       'CAPACITY_VIOLATION'   -> expected participants exceed capacity.
+       'POLICY_VIOLATION'     -> purpose not allowed by space usage policy.
+       'OVERLAP'              -> another approved booking overlaps (BR-01).
+       'OUT_OF_SERVICE'       -> out-of-service maintenance overlaps (BR-02).
+       'INVALID_ARGS'         -> invalid time range / purpose / participants.
+   - If @result_status <> 'AUTO_APPROVED', no booking row is written.
+--------------------------------------------------------------------------- */
+CREATE OR ALTER PROCEDURE dbo.sp_AutoApproveBookingRequest
+    @user_id                   INT,
+    @space_id                  INT,
+    @start_time                DATETIME2,
+    @end_time                  DATETIME2,
+    @purpose                   NVARCHAR(50),
+    @expected_participants     INT = NULL,
+    @result_status             NVARCHAR(40) OUTPUT,
+    @booking_id                INT OUTPUT
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    DECLARE @snapshot NVARCHAR(MAX);
-    DECLARE @space_status NVARCHAR(20);
-    DECLARE @capacity INT;
-    DECLARE @instant_bookable BIT;
+    DECLARE @is_auto            BIT;
+    DECLARE @capacity           INT;
+    DECLARE @current_status     NVARCHAR(20);
+    DECLARE @usage_policy       NVARCHAR(MAX);
+    DECLARE @has_advisory       BIT = 0;
+    DECLARE @new_booking_id     INT;
+
+    SET @result_status = 'AUTO_APPROVED';
+    SET @booking_id    = NULL;
+
+    -- Argument validation (no transaction needed yet).
+    IF @end_time <= @start_time
+       OR @purpose NOT IN ('Lecture', 'Examination', 'Seminar', 'Workshop',
+                           'Meeting', 'Student Activity', 'Administrative Event')
+       OR (@expected_participants IS NOT NULL AND @expected_participants <= 0)
+    BEGIN
+        SET @result_status = 'INVALID_ARGS';
+        RETURN;
+    END
 
     BEGIN TRY
-        BEGIN TRANSACTION;
+        BEGIN TRAN;
 
-        /* ---- 1. Space state + capacity + instant-eligibility (RC-05) ----
-           Take UPDLOCK on the space row so its status cannot change mid-flight. */
-        SELECT @space_status     = s.current_status,
-               @capacity         = s.capacity,
-               @instant_bookable = s.instant_bookable
-        FROM dbo.spaces AS s WITH (UPDLOCK, HOLDLOCK)
+        /* 1. Lock the space row and read its state, capacity, policy, and the
+              AutoBookingEnabled gate. UPDLOCK serializes concurrent readers
+              of the same space row. */
+        SELECT @is_auto        = s.AutoBookingEnabled,
+               @capacity       = s.capacity,
+               @current_status = s.current_status,
+               @usage_policy   = s.usage_policy
+        FROM dbo.spaces s WITH (UPDLOCK)
         WHERE s.space_id = @space_id;
 
-        IF @space_status IS NULL
+        IF @is_auto IS NULL
         BEGIN
-            THROW 50001, N'Space does not exist.', 1;
+            SET @result_status = 'SPACE_NOT_FOUND';
+            ROLLBACK;
+            RETURN;
         END
 
-        IF @space_status IN ('Under Maintenance', 'Temporarily Closed', 'Retired')
+        /* 2. MANDATORY GATE: auto-approval only when AutoBookingEnabled = 1. */
+        IF @is_auto = 0
         BEGIN
-            THROW 50001, N'Space is not bookable in its current status.', 1;
+            SET @result_status = 'AUTO_BOOKING_DISABLED';
+            ROLLBACK;
+            RETURN;
         END
 
-        IF @instant_bookable = 0
+        /* 3. Space availability (BR-02). */
+        IF @current_status IN ('Temporarily Closed', 'Retired', 'Under Maintenance')
         BEGIN
-            THROW 50009, N'Space is not eligible for instant booking; submit a staff approval request instead.', 1;
+            SET @result_status = 'SPACE_UNAVAILABLE';
+            ROLLBACK;
+            RETURN;
         END
 
+        /* 4. Capacity check. */
         IF @expected_participants IS NOT NULL AND @expected_participants > @capacity
         BEGIN
-            THROW 50001, N'Expected participants exceed the space capacity.', 1;
+            SET @result_status = 'CAPACITY_VIOLATION';
+            ROLLBACK;
+            RETURN;
         END
 
-        /* ---- 2. SERIALIZATION POINT: overlap check (BR-01) ----
-           UPDLOCK + HOLDLOCK hold a key-range lock on the candidate interval,
-           so a concurrent identical request blocks here until we COMMIT. */
+        /* 5. Usage-policy check (BR-P2-03). A NULL/empty policy is open.
+              Otherwise the purpose keyword must appear in the policy text. */
+        IF @usage_policy IS NOT NULL AND LTRIM(RTRIM(@usage_policy)) <> N''
+           AND CHARINDEX(@purpose, @usage_policy) = 0
+        BEGIN
+            SET @result_status = 'POLICY_VIOLATION';
+            ROLLBACK;
+            RETURN;
+        END
+
+        /* 6. SERIALIZATION POINT (Strategy B): guarded overlap scan.
+              UPDLOCK + HOLDLOCK on IX_bookings_space_time takes a range lock
+              so a concurrent identical request blocks here, then re-scans
+              after this transaction commits and sees the conflict. */
         IF EXISTS (
             SELECT 1
             FROM dbo.bookings WITH (UPDLOCK, HOLDLOCK)
             WHERE space_id = @space_id
               AND status IN ('Approved', 'Checked In', 'Completed')
               AND start_time < @end_time
-              AND end_time  > @start_time
+              AND end_time   > @start_time
         )
         BEGIN
-            THROW 50002, N'Time conflict: the space is already approved for an overlapping period.', 1;
+            SET @result_status = 'OVERLAP';
+            ROLLBACK;
+            RETURN;
         END
 
-        /* ---- 3. Maintenance gate (BR-02 refined by RC-01) ----
-           out-of-service maintenance overlapping the interval blocks the booking. */
+        /* 7. Out-of-service maintenance gate (BR-02). */
+        IF EXISTS (SELECT 1 FROM dbo.fn_active_out_of_service(@space_id, @start_time, @end_time))
+        BEGIN
+            SET @result_status = 'OUT_OF_SERVICE';
+            ROLLBACK;
+            RETURN;
+        END
+
+        /* 8. Collect active advisories (informational, no lock needed). */
         IF EXISTS (
             SELECT 1
-            FROM dbo.maintenance_records
-            WHERE space_id = @space_id
-              AND impact_level = 'out-of-service'
-              AND (completion_time IS NULL OR completion_time > @start_time)
-              AND start_time < @end_time
+            FROM dbo.maintenance_records m
+            WHERE m.space_id = @space_id
+              AND m.impact_level = 'advisory'
+              AND m.status NOT IN ('Completed', 'Cancelled')
+              AND m.start_time < @end_time
+              AND (m.completion_time IS NULL OR m.completion_time > @start_time)
         )
+            SET @has_advisory = 1;
+
+        /* 9. INSERT the booking as APPROVED (instant path). */
+        INSERT INTO dbo.bookings
+            (user_id, space_id, start_time, end_time, purpose,
+             expected_participants, status, advisory_acknowledged, advisory_snapshot)
+        VALUES
+            (@user_id, @space_id, @start_time, @end_time, @purpose,
+             @expected_participants, 'Approved', 0, NULL);
+
+        SET @new_booking_id = SCOPE_IDENTITY();
+
+        /* 10. Record the automatic decision (staff_id NULL = system actor,
+               keeping approval history uniform, BR-03). */
+        INSERT INTO dbo.approvals (booking_id, staff_id, decision_time, decision_note)
+        VALUES (@new_booking_id, NULL, SYSDATETIME(),
+                N'Automatic approval (auto-booking policy, AutoBookingEnabled=1).');
+
+        /* 11. Acknowledge each active advisory (RC-03 / BR-P2-01). */
+        IF @has_advisory = 1
         BEGIN
-            THROW 50003, N'The space is under out-of-service maintenance for this period.', 1;
+            INSERT INTO dbo.advisory_acknowledgements (booking_id, maintenance_id, acknowledged_by, acknowledged_at)
+            SELECT @new_booking_id, m.maintenance_id, @user_id, SYSDATETIME()
+            FROM dbo.maintenance_records m
+            WHERE m.space_id = @space_id
+              AND m.impact_level = 'advisory'
+              AND m.status NOT IN ('Completed', 'Cancelled')
+              AND m.start_time < @end_time
+              AND (m.completion_time IS NULL OR m.completion_time > @start_time);
+
+            UPDATE dbo.bookings
+            SET advisory_acknowledged = 1,
+                advisory_snapshot = (
+                    SELECT STRING_AGG(N'[' + CAST(m.maintenance_id AS NVARCHAR(20)) + N'] ' + m.problem_description, N'; ')
+                    FROM dbo.maintenance_records m
+                    WHERE m.space_id = @space_id
+                      AND m.impact_level = 'advisory'
+                      AND m.status NOT IN ('Completed', 'Cancelled')
+                      AND m.start_time < @end_time
+                      AND (m.completion_time IS NULL OR m.completion_time > @start_time)
+                )
+            WHERE booking_id = @new_booking_id;
         END
 
-        /* ---- 4. Collect advisory maintenance for the acknowledgement (RC-03) ---- */
-        SELECT @snapshot = STRING_AGG(
-                   CONCAT('Maintenance #', m.maintenance_id, ': ', m.problem_description),
-                   CHAR(10)
-               )
-        FROM dbo.maintenance_records AS m
-        WHERE m.space_id = @space_id
-          AND m.impact_level = 'advisory'
-          AND (m.completion_time IS NULL OR m.completion_time > @start_time)
-          AND m.start_time < @end_time;
+        COMMIT;
 
-        /* ---- 5. Insert booking ----
-           advisories_acknowledged = 1 when advisory maintenance exists. */
-        INSERT INTO dbo.bookings (
-            user_id, space_id, start_time, end_time, purpose,
-            expected_participants, status,
-            advisories_acknowledged, advisories_snapshot
-        )
-        VALUES (
-            @user_id, @space_id, @start_time, @end_time, @purpose,
-            @expected_participants, 'Approved',
-            CASE WHEN @snapshot IS NULL THEN 0 ELSE 1 END,
-            @snapshot
-        );
-
-        SET @booking_id = SCOPE_IDENTITY();
-
-        /* ---- 6. Auto-approval audit record (BR-03 / A-05) ---- */
-        INSERT INTO dbo.approvals (booking_id, staff_id, decision_time, decision_note, rejection_reason)
-        VALUES (@booking_id, @system_staff_id, SYSDATETIME(), N'Instant booking auto-approval (usage policy satisfied).', NULL);
-
-        COMMIT TRANSACTION;
+        SET @booking_id    = @new_booking_id;
+        SET @result_status = 'AUTO_APPROVED';
     END TRY
     BEGIN CATCH
-        IF @@TRANCOUNT > 0
-            ROLLBACK TRANSACTION;
-
-        /* Deadlock (1205) / lock-timeout (1222): re-raise so caller can retry. */
+        IF @@TRANCOUNT > 0 ROLLBACK;
+        SET @result_status = N'ERROR: ' + ERROR_MESSAGE();
         THROW;
     END CATCH
 END;
 GO
 
 /* ----------------------------------------------------------------------------
-   PROCEDURE: usp_ApproveBooking
-   Staff approval path. Serializes against concurrent instant bookings and other
-   approvals for the same space/interval, then records the decision.
----------------------------------------------------------------------------- */
-CREATE PROCEDURE dbo.usp_ApproveBooking
-    @booking_id   INT,
-    @staff_id     INT,
-    @decision_note NVARCHAR(MAX) = NULL
+   PROCEDURE 2: sp_book_space_staff_approve
+   Staff-approval path. Uses the same serialization point so that BR-01 holds
+   regardless of which path created/approved the booking.
+--------------------------------------------------------------------------- */
+CREATE OR ALTER PROCEDURE dbo.sp_book_space_staff_approve
+    @booking_id    INT,
+    @staff_id      INT,
+    @decision_note NVARCHAR(MAX) = NULL,
+    @result_status NVARCHAR(40) OUTPUT
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    DECLARE @space_id INT;
-    DECLARE @start_time DATETIME2;
-    DECLARE @end_time DATETIME2;
+    DECLARE @space_id    INT;
+    DECLARE @start_time  DATETIME2;
+    DECLARE @end_time    DATETIME2;
+
+    SET @result_status = 'APPROVED';
 
     BEGIN TRY
-        BEGIN TRANSACTION;
+        BEGIN TRAN;
 
-        /* Lock the booking row (UPDLOCK) so it cannot be double-approved (C3). */
-        SELECT @space_id   = b.space_id,
-               @start_time = b.start_time,
-               @end_time   = b.end_time
-        FROM dbo.bookings AS b WITH (UPDLOCK, HOLDLOCK)
-        WHERE b.booking_id = @booking_id;
+        /* Lock the pending booking row first (single-row guard, C3). */
+        SELECT @space_id = space_id, @start_time = start_time, @end_time = end_time
+        FROM dbo.bookings WITH (UPDLOCK)
+        WHERE booking_id = @booking_id;
 
         IF @space_id IS NULL
-            THROW 50004, N'Booking does not exist.', 1;
+        BEGIN
+            SET @result_status = 'BOOKING_NOT_FOUND';
+            ROLLBACK;
+            RETURN;
+        END
 
-        IF NOT EXISTS (SELECT 1 FROM dbo.bookings WHERE booking_id = @booking_id AND status = 'Pending')
-            THROW 50004, N'Booking is not in Pending state; it cannot be approved.', 1;
-
-        /* ---- SERIALIZATION POINT: overlap check (BR-01), same guard as instant booking. ---- */
+        /* Serialize writers for this space+window and re-check overlap. */
         IF EXISTS (
             SELECT 1
             FROM dbo.bookings WITH (UPDLOCK, HOLDLOCK)
             WHERE space_id = @space_id
+              AND booking_id <> @booking_id
               AND status IN ('Approved', 'Checked In', 'Completed')
               AND start_time < @end_time
-              AND end_time  > @start_time
+              AND end_time   > @start_time
         )
         BEGIN
-            THROW 50002, N'Time conflict: the space is already approved for an overlapping period.', 1;
+            SET @result_status = 'OVERLAP';
+            ROLLBACK;
+            RETURN;
         END
 
-        /* ---- Maintenance gate (BR-02 refined by RC-01). ---- */
-        IF EXISTS (
-            SELECT 1
-            FROM dbo.maintenance_records
-            WHERE space_id = @space_id
-              AND impact_level = 'out-of-service'
-              AND (completion_time IS NULL OR completion_time > @start_time)
-              AND start_time < @end_time
-        )
+        /* Reject if an out-of-service maintenance now overlaps (BR-02). */
+        IF EXISTS (SELECT 1 FROM dbo.fn_active_out_of_service(@space_id, @start_time, @end_time))
         BEGIN
-            THROW 50003, N'The space is under out-of-service maintenance for this period.', 1;
+            SET @result_status = 'OUT_OF_SERVICE';
+            ROLLBACK;
+            RETURN;
         END
 
-        /* ---- Approve + audit. ---- */
+        /* Approve the booking. */
         UPDATE dbo.bookings
         SET status = 'Approved'
         WHERE booking_id = @booking_id;
 
-        INSERT INTO dbo.approvals (booking_id, staff_id, decision_time, decision_note, rejection_reason)
-        VALUES (@booking_id, @staff_id, SYSDATETIME(), @decision_note, NULL);
+        /* Record the staff decision (BR-03, BR-09). */
+        IF EXISTS (SELECT 1 FROM dbo.approvals WHERE booking_id = @booking_id)
+        BEGIN
+            UPDATE dbo.approvals
+            SET staff_id = @staff_id, decision_time = SYSDATETIME(),
+                decision_note = ISNULL(@decision_note, decision_note)
+            WHERE booking_id = @booking_id;
+        END
+        ELSE
+        BEGIN
+            INSERT INTO dbo.approvals (booking_id, staff_id, decision_time, decision_note)
+            VALUES (@booking_id, @staff_id, SYSDATETIME(), @decision_note);
+        END
 
-        COMMIT TRANSACTION;
+        COMMIT;
     END TRY
     BEGIN CATCH
-        IF @@TRANCOUNT > 0
-            ROLLBACK TRANSACTION;
+        IF @@TRANCOUNT > 0 ROLLBACK;
+        SET @result_status = N'ERROR: ' + ERROR_MESSAGE();
         THROW;
     END CATCH
 END;
 GO
 
 /* ----------------------------------------------------------------------------
-   PROCEDURE: usp_RejectBooking
-   Staff rejection path (BR-04). Requires a rejection reason.
----------------------------------------------------------------------------- */
-CREATE PROCEDURE dbo.usp_RejectBooking
-    @booking_id       INT,
-    @staff_id         INT,
-    @rejection_reason NVARCHAR(MAX),
-    @decision_note    NVARCHAR(MAX) = NULL
-AS
-BEGIN
-    SET NOCOUNT ON;
-    SET XACT_ABORT ON;
-
-    BEGIN TRY
-        IF @rejection_reason IS NULL OR LTRIM(RTRIM(@rejection_reason)) = ''
-            THROW 50005, N'Rejection reason is required when a booking is rejected (BR-04).', 1;
-
-        BEGIN TRANSACTION;
-
-        IF NOT EXISTS (
-            SELECT 1 FROM dbo.bookings WITH (UPDLOCK, HOLDLOCK)
-            WHERE booking_id = @booking_id AND status = 'Pending'
-        )
-            THROW 50004, N'Booking is not in Pending state; it cannot be rejected.', 1;
-
-        UPDATE dbo.bookings
-        SET status = 'Rejected'
-        WHERE booking_id = @booking_id;
-
-        INSERT INTO dbo.approvals (booking_id, staff_id, decision_time, decision_note, rejection_reason)
-        VALUES (@booking_id, @staff_id, SYSDATETIME(), @decision_note, @rejection_reason);
-
-        COMMIT TRANSACTION;
-    END TRY
-    BEGIN CATCH
-        IF @@TRANCOUNT > 0
-            ROLLBACK TRANSACTION;
-        THROW;
-    END CATCH
-END;
-GO
-
-/* ----------------------------------------------------------------------------
-   PROCEDURE: usp_UpdateMaintenanceImpactLevel
-   Escalates / downgrades impact_level while a maintenance record is open (RC-04).
-   - UPDLOCK on the maintenance row prevents lost updates (C4).
-   - On escalation to out-of-service, returns the set of affected approved
-     bookings (output 16 query) for staff contact.
----------------------------------------------------------------------------- */
-CREATE PROCEDURE dbo.usp_UpdateMaintenanceImpactLevel
+   PROCEDURE 3: sp_set_maintenance_impact
+   Escalate/downgrade impact_level with C4 protection (UPDLOCK on the row)
+   and, on escalation to out-of-service, surface affected approved bookings
+   (RC-04 / RC-10).
+--------------------------------------------------------------------------- */
+CREATE OR ALTER PROCEDURE dbo.sp_set_maintenance_impact
     @maintenance_id INT,
-    @new_level      NVARCHAR(20),
+    @new_impact     NVARCHAR(20),
     @result_note    NVARCHAR(MAX) = NULL
 AS
 BEGIN
@@ -293,75 +362,54 @@ BEGIN
     SET XACT_ABORT ON;
 
     DECLARE @space_id INT;
-    DECLARE @m_start DATETIME2;
-    DECLARE @m_end DATETIME2;
-    DECLARE @old_level NVARCHAR(20);
 
     BEGIN TRY
-        BEGIN TRANSACTION;
+        BEGIN TRAN;
 
-        /* Lock the maintenance row. */
-        SELECT @space_id = m.space_id,
-               @m_start  = m.start_time,
-               @m_end    = m.completion_time,
-               @old_level = m.impact_level
-        FROM dbo.maintenance_records AS m WITH (UPDLOCK, HOLDLOCK)
+        /* Lock the maintenance row to serialize concurrent impact changes. */
+        SELECT @space_id = m.space_id
+        FROM dbo.maintenance_records m WITH (UPDLOCK)
         WHERE m.maintenance_id = @maintenance_id;
 
         IF @space_id IS NULL
-            THROW 50006, N'Maintenance record does not exist.', 1;
-
-        IF @new_level NOT IN ('out-of-service', 'advisory')
-            THROW 50007, N'Impact level must be ''out-of-service'' or ''advisory''.', 1;
-
-        IF @m_end IS NOT NULL
-            THROW 50008, N'Cannot change the impact level of a completed maintenance record.', 1;
-
-        /* Serialize against concurrent booking creation (C2): take the same
-           booking key-range lock the booking procedures take. */
-        IF EXISTS (
-            SELECT 1
-            FROM dbo.bookings WITH (UPDLOCK, HOLDLOCK)
-            WHERE space_id = @space_id
-              AND status IN ('Approved', 'Checked In', 'Completed')
-              AND start_time < COALESCE(@m_end, DATEADD(year, 100, @m_start))
-              AND end_time  > @m_start
-        )
         BEGIN
-            /* Just acquire the range lock; competing instant bookings will
-               re-check maintenance after we COMMIT. No action needed. */
-            SELECT 1;
+            RAISERROR('MAINTENANCE_NOT_FOUND: maintenance record does not exist.', 16, 1);
+        END
+
+        IF @new_impact NOT IN ('out-of-service', 'advisory')
+        BEGIN
+            RAISERROR('INVALID_IMPACT: impact_level must be ''out-of-service'' or ''advisory''.', 16, 1);
         END
 
         UPDATE dbo.maintenance_records
-        SET impact_level = @new_level,
-            result_note   = COALESCE(@result_note, result_note)
+        SET impact_level = @new_impact,
+            result_note   = ISNULL(@result_note, result_note)
         WHERE maintenance_id = @maintenance_id;
 
-        /* On escalation to out-of-service, return the affected approved bookings
-           so staff can contact requesters (RC-04 / output 16). */
-        IF @new_level = 'out-of-service' AND @old_level = 'advisory'
+        /* If escalated to out-of-service, surface approved bookings affected. */
+        IF @new_impact = 'out-of-service'
         BEGIN
-            SELECT b.booking_id, u.full_name AS requester, u.email,
-                   b.start_time, b.end_time, s.space_code
-            FROM dbo.bookings AS b
-            INNER JOIN dbo.users AS u ON u.user_id = b.user_id
-            INNER JOIN dbo.spaces AS s ON s.space_id = b.space_id
-            WHERE b.space_id = @space_id
-              AND b.status IN ('Approved', 'Checked In', 'Completed')
-              AND b.start_time < COALESCE(@m_end, DATEADD(year, 100, @m_start))
-              AND b.end_time  > @m_start;
+            SELECT b.booking_id, b.user_id, b.space_id, b.start_time, b.end_time,
+                   u.email AS requester_email
+            FROM dbo.bookings b WITH (UPDLOCK, HOLDLOCK)
+            INNER JOIN dbo.maintenance_records m
+                ON m.space_id = b.space_id
+            INNER JOIN dbo.users u ON u.user_id = b.user_id
+            WHERE m.maintenance_id = @maintenance_id
+              AND b.status IN ('Approved', 'Checked In')
+              AND m.start_time < b.end_time
+              AND (m.completion_time IS NULL OR m.completion_time > b.start_time)
+            ORDER BY b.start_time;
         END
 
-        COMMIT TRANSACTION;
+        COMMIT;
     END TRY
     BEGIN CATCH
-        IF @@TRANCOUNT > 0
-            ROLLBACK TRANSACTION;
+        IF @@TRANCOUNT > 0 ROLLBACK;
         THROW;
     END CATCH
 END;
 GO
 
-PRINT 'Concurrency implementation procedures created successfully.';
+PRINT 'Phase 2 concurrency implementation installed successfully.';
 GO

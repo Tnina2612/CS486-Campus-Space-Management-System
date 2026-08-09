@@ -2,7 +2,7 @@
 
 ## 1. Core Conflict
 
-At the start of each semester, multiple users and staff may simultaneously attempt to book the same popular space for overlapping time periods, either through **instant booking** (auto-approval) or **staff approval**.
+At the start of each semester, multiple users and staff may simultaneously attempt to book the same popular space for overlapping time periods, either through **automatic (instant) booking** or **staff approval**.
 
 The invariant that must never break (BR-01): *the same space cannot have two approved bookings with overlapping time periods.*
 
@@ -35,7 +35,7 @@ Secondary races (from Step 8):
 
 - The availability scan takes an **update** lock (UPDLOCK) and holds it until end of transaction (HOLDLOCK), i.e., an S/U range lock on the candidate interval keys in `bookings` (space_id, start_time, end_time).
 - A concurrent booking attempt for the same space/interval blocks at the scan, then re-evaluates after the first transaction commits/rolls back. Because the first transaction has already inserted its row before releasing the lock, the second transaction's re-scan sees the conflict and aborts.
-- **Pros:** strong guarantee, no application retry logic needed, linearizable; simple and idiomatic T-SQL; works for both instant booking and staff approval.
+- **Pros:** strong guarantee, no application retry logic needed, linearizable; simple and idiomatic T-SQL; works for both automatic and staff-approval booking paths.
 - **Cons:** reduces concurrency on the *same space+interval* (contention is exactly what we want to serialize); requires care with index support so the range lock is taken on an index key range.
 
 ### Strategy C — SERIALIZABLE isolation level
@@ -46,7 +46,7 @@ Secondary races (from Step 8):
 
 ### Recommendation
 
-**Adopt Strategy B (pessimistic locking with `UPDLOCK, HOLDLOCK`) inside a dedicated stored procedure**, wrapped in an explicit transaction, for every path that creates or approves a booking. The availability scan uses the range index `IX_bookings_space_time (space_id, start_time, end_time)` created in the migration, so SQL Server locks the specific space's time-range and blocks only genuinely competing bookings.
+**Adopt Strategy B (pessimistic locking with `UPDLOCK, HOLDLOCK`) inside a dedicated stored procedure** — `sp_AutoApproveBookingRequest` for the automatic path and a staff-approval procedure for the manual path — wrapped in explicit transactions. The availability scan uses the range index `IX_bookings_space_time (space_id, start_time, end_time)` created in the migration, so SQL Server locks the specific space's time-range and blocks only genuinely competing bookings.
 
 Additional safeguards layered on top:
 - **Escalation path (C2 / C4):** the maintenance update transaction locks the `maintenance_records` row (`UPDLOCK`) and takes the same booking range lock before evaluating impact; the booking procedure in turn re-reads maintenance status *after* acquiring its own locks, so stale `advisory` reads are impossible.
@@ -56,15 +56,16 @@ Additional safeguards layered on top:
 
 ### 3.1 Default isolation
 
-Database keeps the default **READ COMMITTED** (no global behavior change — least invasive to existing Phase 1 queries).
+Database keeps the default **READ COMMITTED** (no global behavior change — least invasive to existing Phase 1 queries). Serialization is achieved per-transaction via lock hints, not by changing the database isolation level.
 
-### 3.2 Booking / Approval procedure contract
+### 3.2 Booking / Approval procedure contract (`sp_AutoApproveBookingRequest` + staff path)
 
 Every booking creation or approval runs inside one stored procedure that:
 
 1. **BEGIN TRANSACTION**
 2. **Check space state** — verify `spaces.current_status` is not `Under Maintenance`/`Temporarily Closed`/`Retired` and capacity ≥ expected participants (read, consistent within transaction).
-3. **Serialization point** — issue the guarded overlap scan:
+3. **Check auto-booking eligibility** — for the automatic path, verify `spaces.AutoBookingEnabled = 1`; if it is `0`, the request must NOT be auto-approved (falls back to staff workflow / explicit error) — **mandatory pipeline rule**.
+4. **Serialization point** — issue the guarded overlap scan:
    ```sql
    SELECT COUNT(*)
    FROM dbo.bookings WITH (UPDLOCK, HOLDLOCK)
@@ -76,10 +77,10 @@ Every booking creation or approval runs inside one stored procedure that:
    - `UPDLOCK` → the row/range locks are update locks (not shared), compatible only with other update locks on disjoint rows.
    - `HOLDLOCK` → locks persist until `COMMIT`.
    - The index `IX_bookings_space_time` guarantees a **key-range lock** on the space's interval, so a concurrent identical request blocks instead of passing the check.
-4. **Check maintenance** — for the same space, read active maintenance records with `impact_level = 'out-of-service'` overlapping `[@start_time, @end_time]`; if any → reject. Gather active `advisory` records for the acknowledgement step.
-5. **Write booking** — `INSERT INTO bookings (...)`, setting `advisories_acknowledged` and `advisories_snapshot` (advisory records listed) as required by RC-03.
-6. **Auto-approve (instant booking)** or record approval — insert `approvals` row (staff id for staff decisions; system/sentinel staff for instant) and set `bookings.status = 'Approved'`.
-7. **COMMIT** (or `ROLLBACK` on any violation).
+5. **Check maintenance** — for the same space, read active maintenance records with `impact_level = 'out-of-service'` overlapping `[@start_time, @end_time]`; if any → reject. Gather active `advisory` records for the acknowledgement step.
+6. **Write booking** — `INSERT INTO bookings (...)`, setting `advisory_acknowledged` and `advisory_snapshot` (advisory records listed) as required by RC-03.
+7. **Auto-approve (automatic path)** or record staff approval — insert `approvals` row and set `bookings.status = 'Approved'`. **For the automatic path `approvals.staff_id = NULL`** (no human actor performed the decision — RC-05a); for the manual path it stores the deciding staff member's `user_id`. This is done by `sp_AutoApproveBookingRequest`.
+8. **COMMIT** (or `ROLLBACK` on any violation).
 
 ### 3.3 Escalation procedure contract
 
@@ -98,6 +99,10 @@ BEGIN TRAN
   SELECT TOP 1 * FROM spaces WHERE space_id=@sid AND current_status='Available'
      AND capacity >= @pax
   IF @@ROWCOUNT = 0 --> ROLLBACK (BR-02 / capacity)
+
+  -- 1b. Auto-booking gate (automatic path only)
+  IF NOT EXISTS (SELECT 1 FROM spaces WHERE space_id=@sid AND AutoBookingEnabled=1)
+      --> ROLLBACK with 'auto-booking disabled' status (mandatory rule)
 
   -- 2. SERIALIZATION POINT (Strategy B)
   IF EXISTS (
@@ -122,7 +127,8 @@ BEGIN TRAN
      AND impact_level='advisory' AND ... overlap ...
 
   -- 5. INSERT bookings (with acknowledgement columns)
-  -- 6. INSERT approvals; UPDATE bookings.status = 'Approved'  (if instant)
+  -- 6. INSERT approvals (staff_id = NULL for automatic path; decision_time, note);
+  --    UPDATE bookings.status = 'Approved'
 COMMIT
 ```
 
@@ -134,13 +140,15 @@ COMMIT
 | C2 escalation vs. new booking | Booking proc re-reads maintenance under its own locks; escalation proc takes same range lock | Both procedures |
 | C3 double approval of same booking | `UPDLOCK` on `bookings` row + UNIQUE `approvals.booking_id` backstop | Approval procedure + constraint |
 | C4 lost escalation update | `UPDLOCK` on `maintenance_records` row | Escalation procedure |
+| Auto-booking disabled space | `AutoBookingEnabled = 1` gate check inside `sp_AutoApproveBookingRequest` | Automatic-approval procedure |
+| Auto-approval without actor (RC-05a) | `approvals.staff_id = NULL` written by `sp_AutoApproveBookingRequest` (column relaxed in migration 10) | Automatic-approval procedure + schema |
 
 ## 6. Performance & Complexity Notes
 
 - **Performance:** The guard only blocks transactions contending for the *same space + overlapping interval*. Non-competing bookings (different space or disjoint time) proceed in parallel because their key ranges do not collide.
 - **Complexity:** One stored procedure per booking path keeps the logic in one place; no application-side retry loop or connection-level isolation changes required.
-- **Fallback for C2 edge cases:** `ROLLBACK` with an explicit, catchable error code lets callers distinguish "conflict on this space" from "maintenance blocks booking".
+- **Fallback for C2 edge cases:** `ROLLBACK` with an explicit, catchable error code lets callers distinguish "conflict on this space" from "maintenance blocks booking" from "auto-booking disabled".
 
 ## 7. Open Question
 
-- OQ-P2-02: On a contested instant booking, the procedure rejects the second requester with a conflict error (fail-soft). A waiting-list alternative would need additional schema (not requested).
+- OQ-P2-02: On a contested automatic booking, the procedure rejects the second requester with a conflict error (fail-soft). A waiting-list alternative would need additional schema (not requested).
