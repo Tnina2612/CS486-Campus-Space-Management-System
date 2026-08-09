@@ -99,6 +99,31 @@ SELECT COUNT(*) AS orphan_ack_users
 FROM dbo.advisory_acknowledgements aa
 LEFT JOIN dbo.users u ON u.user_id = aa.acknowledged_by
 WHERE u.user_id IS NULL;
+
+SELECT COUNT(*) AS orphan_incident_users
+FROM dbo.incident_reports ir
+LEFT JOIN dbo.users u ON u.user_id = ir.user_id
+WHERE u.user_id IS NULL;
+
+SELECT COUNT(*) AS orphan_incident_spaces
+FROM dbo.incident_reports ir
+LEFT JOIN dbo.spaces s ON s.space_id = ir.space_id
+WHERE s.space_id IS NULL;
+
+SELECT COUNT(*) AS orphan_consolidation_incident
+FROM dbo.report_consolidations rc
+LEFT JOIN dbo.incident_reports ir ON ir.report_id = rc.incident_report_id
+WHERE ir.report_id IS NULL;
+
+SELECT COUNT(*) AS orphan_consolidation_maintenance
+FROM dbo.report_consolidations rc
+LEFT JOIN dbo.maintenance_records m ON m.maintenance_id = rc.maintenance_id
+WHERE rc.maintenance_id IS NOT NULL AND m.maintenance_id IS NULL;
+
+SELECT COUNT(*) AS orphan_consolidation_staff
+FROM dbo.report_consolidations rc
+LEFT JOIN dbo.users u ON u.user_id = rc.consolidated_by
+WHERE u.user_id IS NULL;
 GO
 
 /* --------------------------------------------------------------------------
@@ -137,6 +162,13 @@ FROM (
     FROM dbo.advisory_acknowledgements
     GROUP BY booking_id, maintenance_id HAVING COUNT(*) > 1
 ) d;
+
+SELECT COUNT(*) AS dup_consolidation_incident
+FROM (
+    SELECT incident_report_id
+    FROM dbo.report_consolidations
+    GROUP BY incident_report_id HAVING COUNT(*) > 1
+) d;
 GO
 
 /* --------------------------------------------------------------------------
@@ -167,7 +199,7 @@ WHERE status NOT IN ('Pending', 'Approved', 'Rejected', 'Cancelled',
 
 SELECT COUNT(*) AS bad_space_status
 FROM dbo.spaces
-WHERE current_status NOT IN ('Available', 'In Use', 'Under Maintenance',
+WHERE current_status NOT IN ('Available', 'In Use',
                              'Temporarily Closed', 'Retired');
 
 SELECT COUNT(*) AS bad_user_role
@@ -178,6 +210,10 @@ WHERE role NOT IN ('Student', 'Lecturer', 'Teaching Assistant',
 
 SELECT COUNT(*) AS bad_ack_flag
 FROM dbo.bookings WHERE advisory_acknowledged NOT IN (0, 1);
+
+SELECT COUNT(*) AS bad_incident_status
+FROM dbo.incident_reports
+WHERE status NOT IN ('Open', 'Triaged', 'Duplicate', 'Resolved');
 GO
 
 /* --------------------------------------------------------------------------
@@ -267,4 +303,20 @@ WHERE s.space_code LIKE 'GEN-%'
   AND b.purpose NOT IN (
       SELECT value FROM STRING_SPLIT(s.usage_policy, ';')
   );
+GO
+
+/* --------------------------------------------------------------------------
+   9. C8: every consolidation maps to a maintenance record (or is NULL only
+      during triage) and consolidated reports are flagged Triaged.
+   ------------------------------------------------------------------------- */
+PRINT '9. C8 incident consolidation consistency';
+
+SELECT COUNT(*) AS consolidation_not_triaged
+FROM dbo.report_consolidations rc
+JOIN dbo.incident_reports ir ON ir.report_id = rc.incident_report_id
+WHERE rc.maintenance_id IS NOT NULL AND ir.status <> 'Triaged';
+
+SELECT COUNT(*) AS consolidation_null_maintenance
+FROM dbo.report_consolidations
+WHERE maintenance_id IS NULL;
 GO

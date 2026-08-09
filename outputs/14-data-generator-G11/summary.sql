@@ -23,6 +23,8 @@ UNION ALL SELECT 'approvals', COUNT(*) FROM dbo.approvals
 UNION ALL SELECT 'usage_sessions', COUNT(*) FROM dbo.usage_sessions
 UNION ALL SELECT 'maintenance_records', COUNT(*) FROM dbo.maintenance_records
 UNION ALL SELECT 'advisory_acknowledgements', COUNT(*) FROM dbo.advisory_acknowledgements
+UNION ALL SELECT 'incident_reports', COUNT(*) FROM dbo.incident_reports
+UNION ALL SELECT 'report_consolidations', COUNT(*) FROM dbo.report_consolidations
 ORDER BY table_name;
 GO
 
@@ -115,4 +117,37 @@ FROM (
     FROM dbo.advisory_acknowledgements
     GROUP BY booking_id
 ) a;
+GO
+
+PRINT '=== C8: incident report status distribution ===';
+SELECT status, COUNT(*) AS n
+FROM dbo.incident_reports
+GROUP BY status
+ORDER BY status;
+GO
+
+PRINT '=== C8: consolidation coverage (reports per maintenance record, top 10) ===';
+SELECT TOP 10 maintenance_id, COUNT(*) AS reports_merged
+FROM dbo.report_consolidations
+WHERE maintenance_id IS NOT NULL
+GROUP BY maintenance_id
+ORDER BY reports_merged DESC;
+
+PRINT '=== C8: maintenance records with the most merged reports ===';
+SELECT COUNT(*) AS maintenance_records_with_reports
+FROM (
+    SELECT maintenance_id
+    FROM dbo.report_consolidations
+    WHERE maintenance_id IS NOT NULL
+    GROUP BY maintenance_id
+) m;
+GO
+
+PRINT '=== C8: consolidated vs unconsolidated incident reports ===';
+SELECT
+  (SELECT COUNT(*) FROM dbo.report_consolidations
+   WHERE maintenance_id IS NOT NULL) AS consolidated_reports,
+  (SELECT COUNT(*) FROM dbo.incident_reports
+   WHERE report_id NOT IN (SELECT incident_report_id
+                           FROM dbo.report_consolidations)) AS unconsolidated_reports;
 GO

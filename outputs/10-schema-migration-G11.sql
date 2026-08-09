@@ -16,13 +16,15 @@
     database.
 
   Implements:
-    RC-01  maintenance_records.impact_level        (advisory / out-of-service)
-    RC-03  bookings.advisory_acknowledged,
-           bookings.advisory_snapshot
-    RC-03  advisory_acknowledgements (NEW table)
-    RC-05  spaces.AutoBookingEnabled               (automatic-approval gate)
-    RC-05a approvals.staff_id NOT NULL -> NULL      (automatic approvals)
-    RC-06  index support for concurrent overlap checks (BR-01)
+    C1   maintenance_records.impact_level        (advisory / out-of-service)
+    C2   spaces.current_status domain: drop 'Under Maintenance' (decouple)
+    C5   bookings.advisory_acknowledged,
+         bookings.advisory_snapshot,
+         advisory_acknowledgements (NEW table)
+    C6   spaces.AutoBookingEnabled               (automatic-approval gate)
+    C7   approvals.staff_id NOT NULL -> NULL      (automatic approvals)
+    C8   incident_reports (NEW table) + report_consolidations (NEW table)
+    C9   index support for concurrent overlap checks (BR-01)
 ===============================================================================
 */
 
@@ -36,7 +38,7 @@ GO
    SECTION 2 - NEW TABLES
 --------------------------------------------------------------------------- */
 
--- RC-03 / BR-P2-01: per-booking acknowledgement of a specific advisory
+-- C5 / BR-12: per-booking acknowledgement of a specific advisory
 -- maintenance record. UNIQUE (booking_id, maintenance_id) enforces that each
 -- advisory is acknowledged at most once per booking.
 IF OBJECT_ID(N'dbo.advisory_acknowledgements', N'U') IS NULL
@@ -63,11 +65,61 @@ BEGIN
 END
 GO
 
+-- C8 / BR-15: end-user incident intake. Booking checks NEVER read this table;
+-- maintenance authority (impact_level) lives on maintenance_records only.
+IF OBJECT_ID(N'dbo.incident_reports', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.incident_reports (
+        report_id   INT           IDENTITY(1,1) PRIMARY KEY,
+        user_id     INT           NOT NULL,
+        space_id    INT           NOT NULL,
+        description NVARCHAR(MAX) NOT NULL,
+        reported_at DATETIME2     NOT NULL DEFAULT (SYSDATETIME()),
+        status      NVARCHAR(20)  NOT NULL DEFAULT ('Open')
+            CHECK (status IN ('Open', 'Triaged', 'Duplicate', 'Resolved')),
+
+        CONSTRAINT FK_incident_reports_users
+            FOREIGN KEY (user_id) REFERENCES dbo.users(user_id)
+            ON UPDATE NO ACTION ON DELETE NO ACTION,
+        CONSTRAINT FK_incident_reports_spaces
+            FOREIGN KEY (space_id) REFERENCES dbo.spaces(space_id)
+            ON UPDATE NO ACTION ON DELETE NO ACTION
+    );
+END
+GO
+
+-- C8: many incident reports -> one maintenance record (duplicate consolidation).
+-- incident_report_id is UNIQUE so a report is merged into at most one record
+-- (prevents Conflict C split). maintenance_id is NULL during triage.
+IF OBJECT_ID(N'dbo.report_consolidations', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.report_consolidations (
+        consolidation_id   INT       IDENTITY(1,1) PRIMARY KEY,
+        incident_report_id INT       NOT NULL,
+        maintenance_id     INT       NULL,
+        consolidated_by    INT       NOT NULL,
+        consolidated_at    DATETIME2 NOT NULL DEFAULT (SYSDATETIME()),
+
+        CONSTRAINT UQ_consolidations_incident UNIQUE (incident_report_id),
+
+        CONSTRAINT FK_consolidations_incidents
+            FOREIGN KEY (incident_report_id) REFERENCES dbo.incident_reports(report_id)
+            ON UPDATE NO ACTION ON DELETE NO ACTION,
+        CONSTRAINT FK_consolidations_maintenance
+            FOREIGN KEY (maintenance_id) REFERENCES dbo.maintenance_records(maintenance_id)
+            ON UPDATE NO ACTION ON DELETE NO ACTION,
+        CONSTRAINT FK_consolidations_staff
+            FOREIGN KEY (consolidated_by) REFERENCES dbo.users(user_id)
+            ON UPDATE NO ACTION ON DELETE NO ACTION
+    );
+END
+GO
+
 /* ----------------------------------------------------------------------------
    SECTION 3 - ALTER TABLE / NEW COLUMNS
 --------------------------------------------------------------------------- */
 
--- RC-03: Bookings acknowledge that the requester was informed of active
+-- C5: Bookings acknowledge that the requester was informed of active
 --       advisory maintenance on the space at booking time.
 IF NOT EXISTS (
     SELECT 1 FROM sys.columns
@@ -81,7 +133,7 @@ BEGIN
 END
 GO
 
--- RC-03: Snapshot of the advisory maintenance descriptions shown to the
+-- C5: Snapshot of the advisory maintenance descriptions shown to the
 --       requester at booking time (audit trail of what was communicated).
 IF NOT EXISTS (
     SELECT 1 FROM sys.columns
@@ -94,7 +146,7 @@ BEGIN
 END
 GO
 
--- RC-01: Maintenance impact level.
+-- C1: Maintenance impact level.
 --       'out-of-service' = space cannot be booked (Phase 1 behaviour).
 --       'advisory'       = space bookable but requester must be notified.
 --       Default 'out-of-service' preserves Phase 1 blocking semantics for
@@ -112,7 +164,7 @@ BEGIN
 END
 GO
 
--- RC-05 / A-08: Space eligible for the automatic approval path.
+-- C6: Space eligible for the automatic approval path.
 --       Default 0 (off) so existing spaces are not silently made auto-bookable.
 IF NOT EXISTS (
     SELECT 1 FROM sys.columns
@@ -126,7 +178,7 @@ BEGIN
 END
 GO
 
--- RC-05a: APPROVAL.staff_id becomes NULLABLE so that automatic approvals can be
+-- C7: APPROVAL.staff_id becomes NULLABLE so that automatic approvals can be
 --       recorded with staff_id = NULL (no human actor performed the decision).
 --       Manual/staff approvals continue to record the deciding staff member.
 --       The FK to users(user_id) is preserved; existing approval rows are kept
@@ -146,7 +198,7 @@ GO
    SECTION 4 - NEW CONSTRAINTS & FOREIGN KEYS
 --------------------------------------------------------------------------- */
 
--- RC-01: Exact enumeration for impact_level.
+-- C1: Exact enumeration for impact_level.
 IF NOT EXISTS (
     SELECT 1 FROM sys.check_constraints
     WHERE parent_object_id = OBJECT_ID(N'dbo.maintenance_records')
@@ -159,7 +211,7 @@ BEGIN
 END
 GO
 
--- RC-03: Boolean domain check for the acknowledgement flag.
+-- C5: Boolean domain check for the acknowledgement flag.
 IF NOT EXISTS (
     SELECT 1 FROM sys.check_constraints
     WHERE parent_object_id = OBJECT_ID(N'dbo.bookings')
@@ -173,9 +225,89 @@ END
 GO
 
 /* ----------------------------------------------------------------------------
+   SECTION 4a - C2: DECOUPLE SPACE OPERATIONAL STATUS FROM MAINTENANCE BLOCKING
+   'Under Maintenance' is removed from SPACE.current_status.
+   Booking eligibility with respect to maintenance is determined ONLY by
+   MAINTENANCE_RECORD.impact_level = 'out-of-service' + time overlap.
+--------------------------------------------------------------------------- */
+
+-- 4a.1) Preserve Phase 1 blocking behaviour BEFORE remapping the status:
+--       every space still flagged 'Under Maintenance' that does NOT already
+--       have an open out-of-service maintenance record gets one starting now,
+--       so availability checks keep rejecting the space exactly as Phase 1.
+--       reporter_id falls back to the first user (seed guarantees a manager).
+INSERT INTO dbo.maintenance_records (
+    space_id, reporter_id, assigned_staff_id,
+    problem_description, start_time, completion_time, status, result_note,
+    impact_level
+)
+SELECT
+    s.space_id,
+    ISNULL((SELECT TOP 1 user_id FROM dbo.users WHERE role = 'Facility Manager'
+            ORDER BY user_id), 1),
+    NULL,
+    'Legacy space status migration: was ''Under Maintenance''; converted to an '
+    + 'out-of-service maintenance record to preserve booking-block behaviour.',
+    SYSDATETIME(),
+    NULL,
+    'Open',
+    NULL,
+    'out-of-service'
+FROM dbo.spaces s
+WHERE s.current_status = 'Under Maintenance'
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.maintenance_records mr
+      WHERE mr.space_id = s.space_id
+        AND mr.impact_level = 'out-of-service'
+        AND mr.completion_time IS NULL
+  );
+GO
+
+-- 4a.2) Legacy rows still flagged 'Under Maintenance' are remapped to a valid
+--       operational status ('Temporarily Closed' best reflects a space whose
+--       usability is interrupted). This NEVER removes data: the operational
+--       status is broad state; maintenance blocking is preserved by the records
+--       created above.
+UPDATE dbo.spaces
+SET current_status = 'Temporarily Closed'
+WHERE current_status = 'Under Maintenance';
+GO
+
+-- 4a.3) Drop the old CHECK constraint that allowed 'Under Maintenance'.
+DECLARE @statusCK sysname;
+DECLARE @dropSQL NVARCHAR(MAX);
+
+SELECT @statusCK = cc.name
+FROM sys.check_constraints cc
+WHERE cc.parent_object_id = OBJECT_ID(N'dbo.spaces')
+  AND cc.definition LIKE '%Under Maintenance%';
+
+IF @statusCK IS NOT NULL
+BEGIN
+    SET @dropSQL = N'ALTER TABLE dbo.spaces DROP CONSTRAINT ' + QUOTENAME(@statusCK);
+    EXEC(@dropSQL);
+END
+GO
+
+-- 4a.4) Add the new CHECK constraint with the reduced domain.
+IF NOT EXISTS (
+    SELECT 1 FROM sys.check_constraints
+    WHERE parent_object_id = OBJECT_ID(N'dbo.spaces')
+      AND name = N'CK_spaces_current_status'
+)
+BEGIN
+    ALTER TABLE dbo.spaces
+        ADD CONSTRAINT CK_spaces_current_status
+        CHECK (current_status IN (
+            'Available', 'In Use', 'Temporarily Closed', 'Retired'
+        ));
+END
+GO
+
+/* ----------------------------------------------------------------------------
    SECTION 5 - INDEXES
-   Support the concurrent overlap check (BR-01 / RC-06) and the new
-   maintenance-availability checks (BR-02 / RC-01).
+   Support the concurrent overlap check (C9 / BR-01) and the new
+   maintenance-availability checks (C1 / BR-11).
 --------------------------------------------------------------------------- */
 
 -- Overlap check index: finding approved bookings on a space that intersect a
@@ -220,7 +352,7 @@ BEGIN
 END
 GO
 
--- Room-finder support index (RC-09 / report Q3 in 16): capacity filter plus
+-- Room-finder support index (C10 / report Q3 in 16): capacity filter plus
 -- status filter for the "available spaces" search.
 IF NOT EXISTS (
     SELECT 1 FROM sys.indexes
@@ -247,6 +379,31 @@ BEGIN
 END
 GO
 
+-- Incident intake: per-space reports and per-maintenance consolidations.
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.incident_reports')
+      AND name = N'IX_incident_reports_space_status'
+)
+BEGIN
+    CREATE INDEX IX_incident_reports_space_status
+        ON dbo.incident_reports (space_id, status)
+        INCLUDE (user_id, reported_at);
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.report_consolidations')
+      AND name = N'IX_consolidations_maintenance'
+)
+BEGIN
+    CREATE INDEX IX_consolidations_maintenance
+        ON dbo.report_consolidations (maintenance_id)
+        INCLUDE (incident_report_id, consolidated_by);
+END
+GO
+
 /* ----------------------------------------------------------------------------
    SECTION 7 - DATA BACKFILL (NEW COLUMNS ONLY)
    - maintenance_records.impact_level: existing records defaulted to
@@ -257,7 +414,7 @@ GO
    - spaces.AutoBookingEnabled: existing spaces defaulted to 0 (auto-approval
      is opt-in only; never silently enabled).
    - approvals.staff_id: no backfill needed. Existing rows keep their recorded
-     staff member. NULL is reserved for future automatic approvals (RC-05a).
+     staff member. NULL is reserved for future automatic approvals (C7).
    No existing data is modified or deleted.
 --------------------------------------------------------------------------- */
 

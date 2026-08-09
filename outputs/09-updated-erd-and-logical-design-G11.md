@@ -11,7 +11,7 @@
 | Entity | Status | Notes |
 | :--- | :--- | :--- |
 | USER | RETAINED | unchanged |
-| SPACE | MODIFIED | + `AutoBookingEnabled` |
+| SPACE | MODIFIED | + `AutoBookingEnabled`; `current_status` domain drops `Under Maintenance` |
 | FACILITY_CATALOG | RETAINED | unchanged |
 | SPACE_FACILITY | RETAINED | unchanged |
 | FACILITY_ASSET | RETAINED | unchanged |
@@ -20,6 +20,8 @@
 | USAGE_SESSION | RETAINED | unchanged |
 | MAINTENANCE_RECORD | MODIFIED | + `impact_level` |
 | **ADVISORY_ACKNOWLEDGEMENT** | **NEW** | associative: BOOKING ↔ MAINTENANCE_RECORD |
+| **INCIDENT_REPORT** | **NEW** | end-user issue intake, distinct from maintenance authority |
+| **REPORT_CONSOLIDATION** | **NEW** | associative: INCIDENT_REPORT ↔ MAINTENANCE_RECORD (duplicate merge) |
 
 ### 1.2 Updated Relationship List
 
@@ -39,8 +41,14 @@
 | BOOKING | 1 | 1 | `||` | `o{` | 0 | N | **ADVISORY_ACKNOWLEDGEMENT** | acknowledged_with | **NEW** |
 | MAINTENANCE_RECORD | 1 | 1 | `||` | `o{` | 0 | N | **ADVISORY_ACKNOWLEDGEMENT** | acknowledged_by | **NEW** |
 | USER | 1 | 1 | `||` | `o{` | 0 | N | **ADVISORY_ACKNOWLEDGEMENT** | acknowledged (action) | **NEW** |
+| USER | 1 | 1 | `||` | `o{` | 0 | N | **INCIDENT_REPORT** | submits | **NEW** |
+| SPACE | 1 | 1 | `||` | `o{` | 0 | N | **INCIDENT_REPORT** | refers_to | **NEW** |
+| INCIDENT_REPORT | 0 | 1 | `o|` | `o{` | 0 | N | **REPORT_CONSOLIDATION** | merged_into | **NEW** |
+| MAINTENANCE_RECORD | 1 | 1 | `||` | `o{` | 0 | N | **REPORT_CONSOLIDATION** | consolidates | **NEW** |
 
-**Participation semantics:** a booking that acknowledges a given advisory creates exactly one row linking that booking to that maintenance record (UNIQUE on `(booking_id, maintenance_id)`). A booking may acknowledge zero or many advisories; a maintenance record may be acknowledged by zero or many bookings.
+**Participation semantics:**
+- `ADVISORY_ACKNOWLEDGEMENT`: a booking that acknowledges a given advisory creates exactly one row linking that booking to that maintenance record (UNIQUE on `(booking_id, maintenance_id)`). A booking may acknowledge zero or many advisories; a maintenance record may be acknowledged by zero or many bookings.
+- `REPORT_CONSOLIDATION`: many incident reports map to **one** maintenance record (duplicate consolidation). During triage an incident report may be unmapped (no maintenance record yet), so `maintenance_id` on the consolidation row is nullable until assigned. Each incident report may be linked to at most **one** maintenance record via the primary consolidation (UNIQUE on `incident_report_id`) so a single report can never be split into two records.
 
 ### 1.3 Updated Mermaid ER Diagram
 
@@ -60,6 +68,10 @@ erDiagram
     BOOKING ||--o{ ADVISORY_ACKNOWLEDGEMENT : acknowledged_with
     MAINTENANCE_RECORD ||--o{ ADVISORY_ACKNOWLEDGEMENT : acknowledged_by
     USER ||--o{ ADVISORY_ACKNOWLEDGEMENT : acknowledged_action
+    USER ||--o{ INCIDENT_REPORT : submits
+    SPACE ||--o{ INCIDENT_REPORT : refers_to
+    INCIDENT_REPORT ||--o| REPORT_CONSOLIDATION : merged_into
+    MAINTENANCE_RECORD ||--o{ REPORT_CONSOLIDATION : consolidates
 
     USER {
         int user_id PK
@@ -149,15 +161,30 @@ erDiagram
         int acknowledged_by FK
         datetime acknowledged_at
     }
+    INCIDENT_REPORT {
+        int report_id PK
+        int user_id FK
+        int space_id FK
+        string description
+        datetime reported_at
+        string status
+    }
+    REPORT_CONSOLIDATION {
+        int consolidation_id PK
+        int incident_report_id FK "UK one record per report"
+        int maintenance_id FK "NULL until triaged"
+        int consolidated_by FK
+        datetime consolidated_at
+    }
 ```
 
 ---
 
 ## 2. Updated Relational Schema (Logical)
 
-Column names use strict `snake_case`. Changes relative to Phase 1 are shown with **[ADD]** / **[MOD]** markers.
+Column names use strict `snake_case`. Changes relative to Phase 1 are shown with **[ADD]** / **[MOD]** markers. Explicit CHECK expressions are written in full.
 
-### TABLE: `spaces` (Phase 1 + new column)
+### TABLE: `spaces` (Phase 1 + changes)
 
 | Column Name | Data Type | Constraints & Keys |
 | :--- | :--- | :--- |
@@ -169,11 +196,12 @@ Column names use strict `snake_case`. Changes relative to Phase 1 are shown with
 | floor | INT | NOT NULL |
 | room_number | NVARCHAR(20) | NOT NULL |
 | capacity | INT | NOT NULL CHECK (capacity > 0) |
-| current_status | NVARCHAR(20) | NOT NULL CHECK (current_status IN ('Available', 'In Use', 'Under Maintenance', 'Temporarily Closed', 'Retired')) |
+| current_status | NVARCHAR(20) | NOT NULL CHECK (current_status IN ('Available', 'In Use', 'Temporarily Closed', 'Retired')) |
 | usage_policy | NVARCHAR(MAX) | |
-| **AutoBookingEnabled** **[ADD]** | BIT | NOT NULL DEFAULT (0) |
+| **AutoBookingEnabled** **[ADD]** | BIT | NOT NULL DEFAULT (0) CHECK (AutoBookingEnabled IN (0, 1)) |
 
-> **[MOD]** RC-05 / A-08: `AutoBookingEnabled = 1` marks a space eligible for the automatic approval path. Safe default `0` (off) for all existing/new spaces.
+> **[MOD]** RC-05: `AutoBookingEnabled = 1` marks a space eligible for the automatic approval path. Safe default `0` (off) for all existing/new spaces.
+> **[MOD]** C2: `Under Maintenance` is **removed** from `current_status`. Booking eligibility with respect to maintenance is determined solely by `MAINTENANCE_RECORD.impact_level = 'out-of-service'` plus time-window overlap. `current_status` now expresses only broad operational state (Available / In Use / Temporarily Closed / Retired).
 
 ### TABLE: `bookings` (Phase 1 + new columns)
 
@@ -190,20 +218,19 @@ Column names use strict `snake_case`. Changes relative to Phase 1 are shown with
 | **advisory_acknowledged** **[ADD]** | BIT | NOT NULL DEFAULT (0) CHECK (advisory_acknowledged IN (0, 1)) |
 | **advisory_snapshot** **[ADD]** | NVARCHAR(MAX) | NULL |
 
-> **[MOD]** RC-03 / A-03: `advisory_acknowledged` records that the requester was informed of all active advisories at booking time; `advisory_snapshot` stores the advisory text shown (audit). Per-advisory detail is stored in `advisory_acknowledgements`.
+> **[MOD]** RC-03: `advisory_acknowledged` records that the requester was informed of all active advisories at booking time; `advisory_snapshot` stores the advisory text shown (audit). Per-advisory detail is stored in `advisory_acknowledgements`.
 
 ### TABLE: `advisory_acknowledgements` (NEW — RC-03)
 
 | Column Name | Data Type | Constraints & Keys |
 | :--- | :--- | :--- |
 | acknowledgement_id | INT | IDENTITY(1,1) PRIMARY KEY |
-| booking_id | INT | NOT NULL UNIQUE-PAIR FK REFERENCES bookings(booking_id) |
-| maintenance_id | INT | NOT NULL UNIQUE-PAIR FK REFERENCES maintenance_records(maintenance_id) |
+| booking_id | INT | NOT NULL FK REFERENCES bookings(booking_id) |
+| maintenance_id | INT | NOT NULL FK REFERENCES maintenance_records(maintenance_id) |
 | acknowledged_by | INT | NOT NULL FK REFERENCES users(user_id) |
 | acknowledged_at | DATETIME2 | NOT NULL DEFAULT (SYSDATETIME()) |
 
 > **Keys:** UNIQUE on `(booking_id, maintenance_id)` — a given advisory is acknowledged at most once per booking.
-> **Business rule BR-P2-01:** one row per (booking, advisory) pair records that this requester acknowledged this advisory.
 
 ### TABLE: `maintenance_records` (Phase 1 + new column)
 
@@ -220,7 +247,7 @@ Column names use strict `snake_case`. Changes relative to Phase 1 are shown with
 | result_note | NVARCHAR(MAX) | |
 | **impact_level** **[ADD]** | NVARCHAR(20) | NOT NULL DEFAULT ('out-of-service') CHECK (impact_level IN ('out-of-service', 'advisory')) |
 
-> **[MOD]** RC-01 / A-01 / A-02: exact enumeration `'out-of-service'` (blocks overlapping bookings, Phase 1 semantics) and `'advisory'` (bookable with acknowledgement). Default `'out-of-service'` preserves the Phase 1 rule for pre-existing records.
+> **[MOD]** RC-01: exact enumeration `'out-of-service'` (blocks overlapping bookings, Phase 1 semantics) and `'advisory'` (bookable with acknowledgement). Default `'out-of-service'` preserves the Phase 1 rule for pre-existing records.
 
 ### TABLE: `approvals` (Phase 1 + relaxed nullability)
 
@@ -233,7 +260,32 @@ Column names use strict `snake_case`. Changes relative to Phase 1 are shown with
 | decision_note | NVARCHAR(MAX) | |
 | rejection_reason | NVARCHAR(MAX) | |
 
-> **[MOD]** RC-05a / BR-P2-03: `staff_id` is relaxed from `NOT NULL` to `NULL` so that **automatic approvals** can be recorded with `staff_id = NULL` (no human actor). **Manual/staff approvals** continue to store the deciding staff member. The FK `users(user_id)` and existing rows are preserved (migration is data-safe).
+> **[MOD]** RC-05a: `staff_id` is relaxed from `NOT NULL` to `NULL` so that **automatic approvals** can be recorded with `staff_id = NULL` (no human actor). **Manual/staff approvals** continue to store the deciding staff member. The FK `users(user_id)` and existing rows are preserved (migration is data-safe).
+
+### TABLE: `incident_reports` (NEW — C8)
+
+| Column Name | Data Type | Constraints & Keys |
+| :--- | :--- | :--- |
+| report_id | INT | IDENTITY(1,1) PRIMARY KEY |
+| user_id | INT | NOT NULL FK REFERENCES users(user_id) |
+| space_id | INT | NOT NULL FK REFERENCES spaces(space_id) |
+| description | NVARCHAR(MAX) | NOT NULL |
+| reported_at | DATETIME2 | NOT NULL DEFAULT (SYSDATETIME()) |
+| status | NVARCHAR(20) | NOT NULL DEFAULT ('Open') CHECK (status IN ('Open', 'Triaged', 'Duplicate', 'Resolved')) |
+
+> **Business rules:** `incident_reports` is the end-user intake channel. It never participates in booking-blocking decisions; only `maintenance_records.impact_level` does (BR-15). Duplicate reports are consolidated via `report_consolidations`, never by deleting reports (BR-07 history preservation).
+
+### TABLE: `report_consolidations` (NEW — C8)
+
+| Column Name | Data Type | Constraints & Keys |
+| :--- | :--- | :--- |
+| consolidation_id | INT | IDENTITY(1,1) PRIMARY KEY |
+| incident_report_id | INT | NOT NULL UNIQUE FK REFERENCES incident_reports(report_id) |
+| maintenance_id | INT | NULL FK REFERENCES maintenance_records(maintenance_id) |
+| consolidated_by | INT | NOT NULL FK REFERENCES users(user_id) |
+| consolidated_at | DATETIME2 | NOT NULL DEFAULT (SYSDATETIME()) |
+
+> **Cardinality:** **many incident reports → one maintenance record**. `incident_report_id` is UNIQUE so a report can be consolidated into at most one maintenance record (prevents the Conflict C split). `maintenance_id` is nullable during triage (report accepted but record not yet created/assigned). `impact_level` authority stays on the maintenance record (staff/manager triage), never on the report.
 
 ---
 
@@ -242,9 +294,14 @@ Column names use strict `snake_case`. Changes relative to Phase 1 are shown with
 | From Table | From Column | To Table | To Column | ON UPDATE | ON DELETE | Business Justification |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | advisory_acknowledgements | booking_id | bookings | booking_id | NO ACTION | NO ACTION | Preserve acknowledgement audit history (BR-07). |
-| advisory_acknowledgements | maintenance_id | maintenance_records | maintenance_id | NO ACTION | NO ACTION | Preserve the linkage to the maintenance record even after the record is closed. |
+| advisory_acknowledgements | maintenance_id | maintenance_records | maintenance_id | NO ACTION | NO ACTION | Preserve the linkage even after the record is closed. |
 | advisory_acknowledgements | acknowledged_by | users | user_id | NO ACTION | NO ACTION | Preserve who acknowledged. |
-| approvals | staff_id | users | user_id | NO ACTION | NO ACTION | **Kept from Phase 1** (column now nullable; FK unchanged). Preserve approval audit (BR-07). |
+| incident_reports | user_id | users | user_id | NO ACTION | NO ACTION | Preserve reporter history. |
+| incident_reports | space_id | spaces | space_id | NO ACTION | NO ACTION | Preserve report-to-space history. |
+| report_consolidations | incident_report_id | incident_reports | report_id | NO ACTION | NO ACTION | Consolidation history preserved; reports are never deleted. |
+| report_consolidations | maintenance_id | maintenance_records | maintenance_id | NO ACTION | NO ACTION | Keep mapping to the consolidated record. |
+| report_consolidations | consolidated_by | users | user_id | NO ACTION | NO ACTION | Preserve the triage actor. |
+| approvals | staff_id | users | user_id | NO ACTION | NO ACTION | **Kept from Phase 1** (column now nullable; FK unchanged). |
 
 ---
 
@@ -252,16 +309,19 @@ Column names use strict `snake_case`. Changes relative to Phase 1 are shown with
 
 | Element | Phase 1 | Phase 2 | Change | Step 8 Ref |
 | :--- | :--- | :--- | :--- | :--- |
-| `spaces` | — | + `AutoBookingEnabled BIT NOT NULL DEFAULT (0)` | ADD column | RC-05 |
-| `bookings` | — | + `advisory_acknowledged BIT NOT NULL DEFAULT (0)` | ADD column | RC-03 |
-| `bookings` | — | + `advisory_snapshot NVARCHAR(MAX) NULL` | ADD column | RC-03 |
-| `maintenance_records` | — | + `impact_level NVARCHAR(20) CHECK IN ('out-of-service','advisory') DEFAULT 'out-of-service'` | ADD column + CHECK | RC-01 |
-| `advisory_acknowledgements` | *(new table)* | `(acknowledgement_id PK, booking_id FK, maintenance_id FK, acknowledged_by FK, acknowledged_at)` | NEW table | RC-03, BR-P2-01 |
-| `approvals.staff_id` | NOT NULL | **NULL** (relaxed, FK preserved) | ALTER column nullability | RC-05a |
-| BR-01 | app-level scan | concurrency-controlled (locking/isolation) | RULE-LEVEL | RC-06 |
-| BR-02 | any maintenance blocks booking | only `out-of-service` blocks; `advisory` → bookable with acknowledgement | RULE-LEVEL (refined) | RC-01 |
-| BR-02 sub-rule | — | bookable-but-notified (acknowledgement stored) | ADDED | RC-03 |
-| APPROVAL | staff decision only | also records auto-approval actor | USAGE refined | RC-05 |
+| `spaces` | — | + `AutoBookingEnabled BIT NOT NULL DEFAULT (0)` | ADD column | C6 / RC-05 |
+| `spaces.current_status` | includes `'Under Maintenance'` | `('Available','In Use','Temporarily Closed','Retired')` | MODIFY CHECK domain | C2 |
+| `bookings` | — | + `advisory_acknowledged BIT NOT NULL DEFAULT (0)` | ADD column | C5 / RC-03 |
+| `bookings` | — | + `advisory_snapshot NVARCHAR(MAX) NULL` | ADD column | C5 / RC-03 |
+| `maintenance_records` | — | + `impact_level NVARCHAR(20) CHECK IN ('out-of-service','advisory') DEFAULT 'out-of-service'` | ADD column + CHECK | C1 / RC-01 |
+| `advisory_acknowledgements` | *(new table)* | `(acknowledgement_id PK, booking_id FK, maintenance_id FK, acknowledged_by FK, acknowledged_at)` | NEW table | C5 / RC-03 |
+| `incident_reports` | *(new table)* | `(report_id PK, user_id FK, space_id FK, description, reported_at, status)` | NEW table | C8 |
+| `report_consolidations` | *(new table)* | `(consolidation_id PK, incident_report_id FK UNIQUE, maintenance_id FK NULL, consolidated_by FK, consolidated_at)` | NEW table | C8 |
+| `approvals.staff_id` | NOT NULL | **NULL** (relaxed, FK preserved) | ALTER column nullability | C7 / RC-05a |
+| BR-01 | app-level scan | concurrency-controlled (locking/isolation) | RULE-LEVEL | C9 / RC-06 |
+| BR-02 | any maintenance blocks booking | only `out-of-service` blocks; `advisory` → bookable with acknowledgement | RULE-LEVEL (refined) | C1 |
+| BR-02 sub-rule | — | bookable-but-notified (acknowledgement stored) | ADDED | C5 |
+| APPROVAL | staff decision only | also records auto-approval actor (`staff_id = NULL`) | USAGE refined | C6/C7 |
 | All Phase 1 tables/relationships | — | retained as-is | RETAINED | — |
 
 ---
@@ -271,7 +331,7 @@ Column names use strict `snake_case`. Changes relative to Phase 1 are shown with
 | Entity | Table | Status |
 | :--- | :--- | :--- |
 | USER | users | RETAINED |
-| SPACE | spaces | MODIFIED (AutoBookingEnabled) |
+| SPACE | spaces | MODIFIED (AutoBookingEnabled, current_status domain) |
 | FACILITY_CATALOG | facility_catalog | RETAINED |
 | SPACE_FACILITY | space_facility | RETAINED |
 | FACILITY_ASSET | facility_assets | RETAINED |
@@ -280,6 +340,8 @@ Column names use strict `snake_case`. Changes relative to Phase 1 are shown with
 | USAGE_SESSION | usage_sessions | RETAINED |
 | MAINTENANCE_RECORD | maintenance_records | MODIFIED (impact_level) |
 | ADVISORY_ACKNOWLEDGEMENT | advisory_acknowledgements | NEW |
+| INCIDENT_REPORT | incident_reports | NEW |
+| REPORT_CONSOLIDATION | report_consolidations | NEW |
 
 ---
 
@@ -287,14 +349,16 @@ Column names use strict `snake_case`. Changes relative to Phase 1 are shown with
 
 | Step 8 Change | Present in Updated Design | Where |
 | :--- | :--- | :--- |
-| RC-01 impact_level | YES | §2 `maintenance_records.impact_level` |
-| RC-02 multiple active records | YES | No schema change; 1:N retained + aggregate availability logic |
-| RC-03 advisory acknowledgement | YES | §2 `bookings.advisory_acknowledged`/`advisory_snapshot` + `advisory_acknowledgements` |
-| RC-04 escalation/downgrade + affected bookings | YES | `impact_level` mutable + report in output 16 (Q4) |
-| RC-05 auto approval for selected spaces | YES | §2 `spaces.AutoBookingEnabled` |
-| RC-05a nullable APPROVAL.staff_id | YES | §2 `approvals.staff_id` NULL + `sp_AutoApproveBookingRequest` (output 12) |
-| RC-06 concurrency control | YES | Outputs 11–13 (locking/isolation design) |
-| RC-07…RC-10 reports | YES | Output 16 (analytical queries) |
+| C1 impact_level | YES | §2 `maintenance_records.impact_level` |
+| C2 current_status decoupled | YES | §2 `spaces.current_status` CHECK domain |
+| C3 multiple active records | YES | 1:N retained; availability logic aggregates all open records |
+| C4 escalation/downgrade + affected bookings | YES | `impact_level` mutable + report in output 16 (Q4) |
+| C5 advisory acknowledgement | YES | §2 `bookings.advisory_acknowledged`/`advisory_snapshot` + `advisory_acknowledgements` |
+| C6 auto approval for selected spaces | YES | §2 `spaces.AutoBookingEnabled` |
+| C7 nullable APPROVAL.staff_id | YES | §2 `approvals.staff_id` NULL + `sp_AutoApproveBookingRequest` (output 12) |
+| C8 incident intake separated | YES | §2 `incident_reports` + `report_consolidations` |
+| C9 concurrency control | YES | Outputs 11–13 (locking/isolation design) |
+| C10 reports | YES | Output 16 (analytical queries) |
 
 ---
 
@@ -304,4 +368,6 @@ Column names use strict `snake_case`. Changes relative to Phase 1 are shown with
 - **A-03:** `advisory_acknowledged` flag + `advisory_snapshot` text + `advisory_acknowledgements` rows together satisfy "record that the requester was informed".
 - **A-08:** `AutoBookingEnabled` defaults to `0` so no space is silently auto-bookable.
 - **A-05:** `approvals.staff_id = NULL` denotes an automatic approval; manual approvals always record a staff member.
+- **A-09:** `incident_reports.status` enumerated as `Open`, `Triaged`, `Duplicate`, `Resolved` (inferred; recorded as assumption).
+- **A-10:** a single incident report consolidates into at most one maintenance record (UNIQUE on `incident_report_id` in `report_consolidations`).
 - `advisory_acknowledgements.acknowledged_by` references the requesting user (who accepted the advisories).

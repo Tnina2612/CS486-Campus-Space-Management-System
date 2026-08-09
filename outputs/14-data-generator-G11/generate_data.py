@@ -94,9 +94,8 @@ SPACE_TYPES = (
 BUILDINGS = ("Central Building", "Science Block", "Engineering Hall",
              "Library", "Business School", "Arts Center", "Sports Complex",
              "IT Center")
-SPACE_STATUSES = ("Available", "In Use", "Under Maintenance",
-                  "Temporarily Closed", "Retired")
-SPACE_STATUS_WEIGHTS = (0.80, 0.06, 0.07, 0.04, 0.03)
+SPACE_STATUSES = ("Available", "In Use", "Temporarily Closed", "Retired")
+SPACE_STATUS_WEIGHTS = (0.82, 0.07, 0.06, 0.05)
 
 PURPOSES = ("Lecture", "Examination", "Seminar", "Workshop", "Meeting",
             "Student Activity", "Administrative Event")
@@ -134,6 +133,16 @@ USAGE_NOTES = ("Lecture ran to schedule", "Equipment used without incident",
                "Microphone reported faulty", "Normal usage",
                "Poster session, removed all materials")
 
+INCIDENT_DESCRIPTIONS = (
+    "Broken projector lamp", "Air conditioning blowing warm air",
+    "Whiteboard markers dried out", "WiFi not reachable in the room",
+    "Loose power socket", "Door handle loose", "Flickering fluorescent light",
+    "Broken chair", "Water stain on ceiling", "Network port dead",
+    "Lock not engaging", "Window won't close",
+)
+INCIDENT_STATUSES = ("Open", "Open", "Open", "Triaged", "Triaged",
+                     "Duplicate", "Resolved")
+
 
 def default_options():
     if os.path.exists(CONFIG_PATH):
@@ -145,10 +154,12 @@ def default_options():
             "spaces": int(cfg.get("spaces", 400)),
             "bookings": int(cfg.get("bookings", 100_000)),
             "maintenance": int(cfg.get("maintenance", 8000)),
+            "incidents": int(cfg.get("incidents", 2000)),
             "batch_size": int(cfg.get("batch_size", 5000)),
         }
     return {"seed": 11, "users": 3000, "spaces": 400,
-            "bookings": 100_000, "maintenance": 8000, "batch_size": 5000}
+            "bookings": 100_000, "maintenance": 8000, "incidents": 2000,
+            "batch_size": 5000}
 
 
 def conn_str(database=DATABASE):
@@ -234,6 +245,12 @@ def reset_generated(conn):
                              WHERE space_id IN {gen_space_ids})
     """)
     cur.execute(f"DELETE FROM dbo.bookings WHERE space_id IN {gen_space_ids}")
+    cur.execute("DELETE FROM dbo.report_consolidations WHERE "
+                "maintenance_id IN (SELECT maintenance_id FROM dbo.maintenance_records "
+                f"WHERE space_id IN {gen_space_ids}) "
+                "OR incident_report_id IN (SELECT report_id FROM dbo.incident_reports "
+                f"WHERE space_id IN {gen_space_ids})")
+    cur.execute(f"DELETE FROM dbo.incident_reports WHERE space_id IN {gen_space_ids}")
     cur.execute(f"""
         DELETE FROM dbo.maintenance_records WHERE space_id IN {gen_space_ids}
     """)
@@ -387,6 +404,53 @@ def gen_maintenance(rng, user_ids, space_ids, staff_ids, count):
             rng.choice(MAINT_PROBLEMS), start, completion, status, result,
             impact,
         ))
+    return rows
+
+
+def gen_incidents(rng, user_ids, space_ids, count):
+    """C8: end-user INCIDENT_REPORT intake rows (never used for booking
+    blocking). Status reflects intake/triage life cycle."""
+    rows = []
+    span_days = (SEMESTER_END - SEMESTER_START).days
+    for _ in range(count):
+        rows.append((
+            rng.choice(user_ids),
+            rng.choice(space_ids),
+            rng.choice(INCIDENT_DESCRIPTIONS),
+            SEMESTER_START + dt.timedelta(
+                days=rng.randint(0, span_days),
+                hours=rng.randint(8, 17),
+                minutes=rng.randint(0, 59)),
+            rng.choice(INCIDENT_STATUSES),
+        ))
+    return rows
+
+
+def gen_consolidations(rng, incident_ids, maint_ids, staff_ids):
+    """C8: duplicate-consolidation mapping. A random subset of incident reports
+    is merged into an existing MAINTENANCE_RECORD (many reports -> one record).
+    Each incident is mapped at most once (UNIQUE incident_report_id); reports
+    with status 'Duplicate' are preferred for consolidation."""
+    rows = []
+    if not incident_ids or not maint_ids:
+        return rows
+    # Pool a SUBSET of maintenance records as consolidation targets so that
+    # MANY reports map onto ONE record (the C8 duplicate-merge scenario),
+    # rather than a 1:1 report-to-record pairing.
+    pool = list(maint_ids)
+    rng.shuffle(pool)
+    target_pool = pool[: max(1, len(pool) // 20)]
+    j = 0
+    for i, report_id in enumerate(incident_ids):
+        # consolidate ~70% of reports, preferring duplicates
+        status = INCIDENT_STATUSES[i % len(INCIDENT_STATUSES)]
+        p = 0.9 if status == "Duplicate" else 0.65
+        if rng.random() > p:
+            continue
+        maint_id = target_pool[j % len(target_pool)]
+        j += 1
+        staff_id = staff_ids[j % len(staff_ids)] if staff_ids else 1
+        rows.append((report_id, maint_id, staff_id))
     return rows
 
 
@@ -563,6 +627,7 @@ def main():
     ap.add_argument("--spaces", type=int, default=None)
     ap.add_argument("--bookings", type=int, default=None)
     ap.add_argument("--maintenance", type=int, default=None)
+    ap.add_argument("--incidents", type=int, default=None)
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=None)
     ap.add_argument("--reset", action="store_true",
@@ -574,13 +639,16 @@ def main():
     n_spaces = args.spaces if args.spaces is not None else opts["spaces"]
     n_bookings = args.bookings if args.bookings is not None else opts["bookings"]
     n_maint = args.maintenance if args.maintenance is not None else opts["maintenance"]
+    n_incidents = args.incidents if args.incidents is not None else opts["incidents"]
     batch_size = args.batch_size if args.batch_size is not None else opts["batch_size"]
 
     rng = random.Random(seed)
-    total_rows = (n_users + n_spaces + n_bookings + n_maint + len(CATALOG) + 4000)
+    total_rows = (n_users + n_spaces + n_bookings + n_maint + n_incidents
+                  + len(CATALOG) + 4000)
     print(f"Generating ~{total_rows:,} rows "
           f"(users={n_users}, spaces={n_spaces}, "
-          f"bookings={n_bookings}, maintenance={n_maint}, seed={seed}).")
+          f"bookings={n_bookings}, maintenance={n_maint}, "
+          f"incidents={n_incidents}, seed={seed}).")
     if total_rows < 100_000:
         print("WARNING: totals below 100,000 rows; raise --bookings/--spaces.")
 
@@ -600,6 +668,9 @@ def main():
         base_maint = table_max(conn, "maintenance_records", "maintenance_id")
         base_ack = table_max(conn, "advisory_acknowledgements",
                              "acknowledgement_id")
+        base_incident = table_max(conn, "incident_reports", "report_id")
+        base_consolidation = table_max(conn, "report_consolidations",
+                                       "consolidation_id")
 
         # ---- 1. users ----
         print("Seeding users ...")
@@ -661,6 +732,31 @@ def main():
                              "space_id IN (SELECT space_id FROM dbo.spaces "
                              "WHERE space_code LIKE 'GEN-%')")
 
+        # ---- 6b. incident_reports + report_consolidations (C8) ----
+        print("Seeding incident reports ...")
+        incident_rows = gen_incidents(rng, user_ids, space_ids, n_incidents)
+        insert_batches(conn, "incident_reports",
+                       ["user_id", "space_id", "description", "reported_at",
+                        "status"], incident_rows, batch_size)
+        incident_ids = read_ids(conn, "incident_reports", "report_id",
+                                base_incident,
+                                "space_id IN (SELECT space_id FROM dbo.spaces "
+                                "WHERE space_code LIKE 'GEN-%')")
+        print("Seeding report consolidations ...")
+        consolidation_rows = gen_consolidations(
+            rng, incident_ids, maint_ids, staff_ids)
+        insert_batches(conn, "report_consolidations",
+                       ["incident_report_id", "maintenance_id",
+                        "consolidated_by"], consolidation_rows, batch_size)
+        # Mark consolidated reports Triaged so the C8 mapping stays consistent.
+        if consolidation_rows:
+            conn.cursor().execute(
+                "UPDATE dbo.incident_reports "
+                "SET status = 'Triaged' "
+                "WHERE report_id IN (SELECT incident_report_id "
+                "FROM dbo.report_consolidations)")
+            conn.commit()
+
         # ---- 7. bookings (non-overlapping grid, avoids OOS maintenance) ----
         print("Seeding bookings ...")
         oos_windows = out_of_service_windows(maint_rows)
@@ -715,7 +811,9 @@ def main():
                       ("approvals", "approval_id"),
                       ("usage_sessions", "session_id"),
                       ("maintenance_records", "maintenance_id"),
-                      ("advisory_acknowledgements", "acknowledgement_id")):
+                      ("advisory_acknowledgements", "acknowledgement_id"),
+                      ("incident_reports", "report_id"),
+                      ("report_consolidations", "consolidation_id")):
             cur.execute(f"SELECT COUNT(*) FROM dbo.{t}")
             summary[t] = cur.fetchval()
         print("\nSeeding complete. Row counts:")

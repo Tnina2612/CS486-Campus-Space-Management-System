@@ -192,14 +192,15 @@ GO
    SQL STATEMENT
    Returns each qualifying space exactly once (NOT EXISTS anti-semi-joins do not
    multiply rows). A space qualifies when it is:
-     1. bookable (current_status NOT IN ('Under Maintenance','Temporarily
-        Closed','Retired')),
+     1. bookable (broad operational status NOT IN ('Temporarily Closed',
+        'Retired'); 'Under Maintenance' no longer exists in this domain and
+        maintenance blocking is handled by rule 5),
      2. large enough (capacity >= @MinCapacity),
      3. equipped with EVERY requested facility (double-NOT EXISTS over the
         required list; trivially true when the list is empty),
      4. free of any overlapping approved-like booking (BR-01),
      5. free of any overlapping OUT-OF-SERVICE maintenance (BR-02 refined by
-        RC-01). Advisory maintenance does NOT block the space.
+        C1). Advisory maintenance does NOT block the space.
 
    ASSUMPTIONS
      * Open maintenance (completion_time IS NULL) is treated as still active,
@@ -243,7 +244,7 @@ SELECT DISTINCT s.space_id,
                 s.current_status
 FROM dbo.spaces AS s
 WHERE s.capacity >= @MinCapacity
-  AND s.current_status NOT IN ('Under Maintenance', 'Temporarily Closed', 'Retired')
+  AND s.current_status NOT IN ('Temporarily Closed', 'Retired')
   -- no overlapping approved-like booking (BR-01)
   AND NOT EXISTS (
       SELECT 1
@@ -441,7 +442,7 @@ DECLARE @RequiredFacilities TABLE (catalog_id INT NOT NULL PRIMARY KEY);  -- emp
 
 SELECT COUNT(*) AS spaces_passing_empty_facility_list
 FROM dbo.spaces AS s
-WHERE s.current_status NOT IN ('Under Maintenance', 'Temporarily Closed', 'Retired')
+WHERE s.current_status NOT IN ('Temporarily Closed', 'Retired')
   AND NOT EXISTS (
       SELECT 1
       FROM @RequiredFacilities AS rf

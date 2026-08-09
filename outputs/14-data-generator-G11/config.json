@@ -4,5 +4,6 @@
   "spaces": 600,
   "bookings": 100000,
   "maintenance": 8000,
+  "incidents": 2000,
   "batch_size": 5000
 }

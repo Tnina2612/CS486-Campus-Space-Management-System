@@ -15,6 +15,8 @@ with **100,000+ records** so the analytical queries
 | `facility_assets` | ~1,000 | assets inserted **before** `space_facility` so the `TRG_ValidateFacilityQuantity` trigger (trackable quantity ≤ asset count) never fires |
 | `space_facility` | ~1,800 | trackable quantity == asset count (trigger-safe) |
 | `maintenance_records` | 8,000 | mixed `advisory` / `out-of-service` impact levels (RC-01) |
+| `incident_reports` | 2,000 | Phase 2 end-user intake (C8); never used for booking blocking |
+| `report_consolidations` | ~1,400 | C8: duplicate reports merged into existing maintenance records (many → one) |
 | `bookings` | 100,000 | scheduled on a **non-overlapping per-space time grid** (BR-01) that **avoids out-of-service maintenance windows** (RC-01); Phase 2 advisory flags/snapshots (RC-03) |
 | `advisory_acknowledgements` | ~1,000+ | RC-03: one row per (booking, advisory maintenance) pair actually acknowledged |
 | `approvals` | ~83,000 | one per decided booking; rejection reasons for `Rejected` |
@@ -62,6 +64,7 @@ python outputs/14-data-generator-G11/generate_data.py --bookings 100000
 | `--spaces` | `400` | number of spaces |
 | `--bookings` | `100000` | number of bookings (drives the 100,000+ requirement) |
 | `--maintenance` | `8000` | number of maintenance records |
+| `--incidents` | `2000` | number of incident reports |
 | `--seed` | `11` | random seed for reproducible data |
 | `--batch-size` | `5000` | `executemany` batch size |
 | `--reset` | off | delete previously generated rows first (reverse FK order), then reseed |
@@ -101,8 +104,9 @@ coverage and Phase 2 data coverage.
 * To rebuild the synthetic dataset from scratch, run with `--reset`. It
   deletes generator-marked rows in reverse foreign-key order (acknowledgements
   → approvals → sessions → bookings → maintenance → space_facility → assets →
-  spaces → users, plus generator-only catalog rows that are unreferenced) and
-  then reseeds. **Phase 1 sample data is preserved**.
+  consolidations → incident reports → spaces → users, plus generator-only
+  catalog rows that are unreferenced) and then reseeds. **Phase 1 sample data
+  is preserved**.
 * If Phase 1 data must be kept untouched, simply omit `--reset`; the generator
   appends new rows with new ids.
 
@@ -120,7 +124,8 @@ coverage and Phase 2 data coverage.
   `space_facility` rows that reference them.
 - **Phase 2 columns populated:** `spaces.AutoBookingEnabled` (RC-05),
   `bookings.advisory_acknowledged` / `advisory_snapshot` (RC-03),
-  `maintenance_records.impact_level` (RC-01), `advisory_acknowledgements`.
+  `maintenance_records.impact_level` (RC-01), `advisory_acknowledgements`,
+  `incident_reports` + `report_consolidations` (C8).
 
 ## Verification
 
