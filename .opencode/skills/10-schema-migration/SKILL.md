@@ -19,6 +19,8 @@ Translate the Phase 2 logical design into an executable, additive SQL Server mig
 3. **Migration Content**: Produce SQL for each of the following categories as applicable:
    - New tables introduced in step 9 (with full column definitions, data types, PK/FK/UNIQUE/CHECK/DEFAULT constraints, and surrogate keys where used).
    - New columns added to existing tables (with correct data types, nullability, defaults, and constraints). Choose nullability so that existing rows remain valid (e.g., allow NULL or provide a DEFAULT) unless the change genuinely requires otherwise.
+   - Update `SPACE.current_status` constraints/domain so `Under Maintenance` is no longer an allowed value; include a safe data backfill/update for legacy rows before tightening constraints.
+   - Add `INCIDENT_REPORT` schema and its triage linkage to `MAINTENANCE_RECORD` so many incident reports can be consolidated under one maintenance record.
    - New Foreign Keys (with explicit `UPDATE`/`DELETE` referential actions justified by the business rules).
    - New `CHECK` constraints with exact logical expressions or enumeration values matching step 9.
    - New indexes required to support the new functionality and expected query patterns.
@@ -30,6 +32,7 @@ Translate the Phase 2 logical design into an executable, additive SQL Server mig
 5. **Data Preservation**:
    - Explicitly confirm no existing data is deleted or altered.
    - If any data backfill is required for the new columns (e.g., populating a new status/level column for existing rows), include the backfill `UPDATE` and explain its default/derivation logic.
+   - If legacy rows currently use `SPACE.current_status = 'Under Maintenance'`, map them to a valid operational status and create/associate appropriate `MAINTENANCE_RECORD` rows preserving intended booking-block behavior.
 6. **Commenting**: For each statement group, add a brief comment referencing the step 9 design element it implements, so the migration is traceable.
 7. **Formatting Structure**: Use clear, sectioned T-SQL with comments: (1) header stating target database and additive-only policy, (2) new tables, (3) altered tables / new columns, (4) new constraints & foreign keys, (5) indexes, (6) triggers / procedures, (7) data backfill (if any).
 

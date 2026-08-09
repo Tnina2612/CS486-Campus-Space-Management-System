@@ -23,16 +23,26 @@ The agent must independently execute terminal commands when needed and must not 
 ## Required Phase 2 Database Additions
 These additions are mandatory and must be implemented and validated during the pipeline:
 
-1. **SPACE auto-booking flag**
+1. **Decouple SPACE operational status from maintenance blocking**
+   - Remove `Under Maintenance` from the allowed value set of `SPACE.current_status`.
+   - `SPACE.current_status` must represent only broad operational state, not maintenance blocking logic.
+   - Booking acceptance/rejection must be determined by time-window overlap with `MAINTENANCE_RECORD` rows where `impact_level = 'out-of-service'`.
+   - Advisory/non-blocking maintenance levels must NOT block bookings.
+2. **Incident intake separated from maintenance authority**
+   - Add a new entity/table `INCIDENT_REPORT` for normal users to submit issue reports.
+   - Ensure duplicate incident reports can be consolidated (many reports mapped to one `MAINTENANCE_RECORD`).
+   - `impact_level` decision authority must remain on `MAINTENANCE_RECORD` (manager/staff triage), not on end-user reports.
+   - Booking checks must read only `MAINTENANCE_RECORD` and ignore unresolved/duplicate `INCIDENT_REPORT` rows for blocking decisions.
+3. **SPACE auto-booking flag**
    - Add `SPACE.AutoBookingEnabled` as `BIT NOT NULL`.
    - Set a safe default of `0` (auto-booking disabled by default for existing/new spaces unless explicitly enabled).
-2. **APPROVAL nullable staff assignment for automatic approvals**
+4. **APPROVAL nullable staff assignment for automatic approvals**
    - Alter `APPROVAL.staff_id` so that it is nullable (`NULL`); it must no longer be defined as `NOT NULL`.
    - Preserve the existing data and foreign-key relationship/constraint for `staff_id` where applicable.
    - Ensure the schema migration safely changes the column from `NOT NULL` to `NULL` without losing existing approval records.
    - For requests that are automatically approved, `APPROVAL.staff_id` must be stored as `NULL`, because no staff member performed the approval.
    - Manual/staff-approved requests must continue to record the approving staff member in `APPROVAL.staff_id`.
-2. **Automatic approval stored procedure**
+5. **Automatic approval stored procedure**
    - Create a stored procedure named `sp_AutoApproveBookingRequest` that evaluates a booking request against applicable space usage policy constraints.
    - Approve only when all policy checks pass and the target space has `SPACE.AutoBookingEnabled = 1`.
    - When the procedure automatically creates or updates the corresponding `APPROVAL` record, it must set `APPROVAL.staff_id = NULL`.
@@ -55,8 +65,8 @@ The agent must execute the following steps in exact order. Do not proceed to the
 
 ### Step 3: Schema Migration
 * **Trigger Skill:** `10-schema-migration`
-* **Output:** Generate `outputs/10-schema-migration-G11.sql` containing safe `ALTER TABLE` commands, including adding `SPACE.AutoBookingEnabled BIT NOT NULL DEFAULT (0)`.
-* **Execution:** Apply the migration SQL in terminal, then run validation queries to confirm the new column, nullability, and default constraint are present.
+* **Output:** Generate `outputs/10-schema-migration-G11.sql` containing safe `ALTER TABLE` commands, including adding `SPACE.AutoBookingEnabled BIT NOT NULL DEFAULT (0)`, removing `Under Maintenance` from `SPACE.current_status`, and creating incident-report structures.
+* **Execution:** Apply the migration SQL in terminal, then run validation queries to confirm the status domain update, incident schema, nullable `APPROVAL.staff_id`, and default constraints are present.
 
 ### Step 4: Concurrency Strategy
 * **Trigger Skill:** `11-concurrency-design`
@@ -65,12 +75,12 @@ The agent must execute the following steps in exact order. Do not proceed to the
 ### Step 5: Concurrency Implementation
 * **Trigger Skill:** `12-concurrency-implementation`
 * **Output:** Generate `outputs/12-concurrency-implementation-G11.sql` with the transaction wrappers/functions, including `sp_AutoApproveBookingRequest`.
-* **Execution:** Execute the SQL file in terminal and verify the procedure exists and enforces both policy checks and `SPACE.AutoBookingEnabled`.
+* **Execution:** Execute the SQL file in terminal and verify procedures enforce both policy checks and `SPACE.AutoBookingEnabled`, while booking-block checks rely only on `MAINTENANCE_RECORD impact_level = 'out-of-service'`.
 
 ### Step 6: Concurrency Testing
 * **Trigger Skill:** `13-concurrency-tests`
 * **Output:** Populate the `outputs/13-concurrency-tests-G11/` directory with SQL transaction files, a Python test script (`test_concurrency.py`), and a `README.md`.
-* **Execution:** Run the test SQL/Python scripts in terminal and confirm auto-approval behavior is correct for both enabled and disabled auto-booking spaces.
+* **Execution:** Run the test SQL/Python scripts in terminal and confirm: auto-approval behavior is correct for both enabled/disabled auto-booking spaces, advisory maintenance does not block, and out-of-service maintenance blocks overlapping bookings.
 
 ### Step 7: Large-Scale Data Generation
 * **Trigger Skill:** `14-data-generator`

@@ -17,8 +17,11 @@ This skill translates the theoretical concurrency design into executable T-SQL s
 ## Instructions
 1. **Write Transaction Scripts:** Based on the strategy defined in step 11, write the raw SQL scripts or `T-SQL` stored procedures required to handle booking insertions safely.
 2. **Implement Overlap Checking:** Ensure the implementation correctly calculates time overlaps (e.g., using explicit inequality checks like `NewStart < ExistingEnd AND NewEnd > ExistingStart`, as T-SQL does not have a native `OVERLAPS` operator).
+   - Booking-block checks must reference only overlapping `MAINTENANCE_RECORD` rows with `impact_level = 'out-of-service'`.
+   - Do not block bookings from advisory/non-blocking maintenance levels and do not use `SPACE.current_status` or `INCIDENT_REPORT` as direct booking blockers.
 3. **Enforce the Lock/Isolation:** Embed the appropriate table hints (e.g., `WITH (UPDLOCK, SERIALIZABLE)`) or `SET TRANSACTION ISOLATION LEVEL` commands in the correct execution order.
 4. **Error Handling:** Ensure the script clearly uses `TRY...CATCH` blocks to raise an exception (`THROW` / `RAISERROR`) or rolls back gracefully when a concurrent overlap or deadlock is detected.
+5. **Triage Procedure Support:** Implement SQL transaction templates or stored procedures that let manager/staff consolidate multiple `INCIDENT_REPORT` rows into one `MAINTENANCE_RECORD` without creating duplicates under concurrent execution.
 
 ## Output
 Generate a SQL file containing the stored procedures, triggers, or transaction templates that implement the concurrency control.

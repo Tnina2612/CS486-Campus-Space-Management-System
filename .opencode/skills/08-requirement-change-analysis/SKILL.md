@@ -16,6 +16,9 @@ Analyze the Phase 2 requirement changes, translate them into a structured list o
    - Which existing entity, attribute, relationship, or business rule in Phase 1 is affected.
    - The nature of the effect (attribute added, status range extended, new relationship needed, existing rule refined/relaxed/deferred, new negative/positive behavior).
    - Any knock-on effect on other entities or rules.
+   - Mandatory coverage:
+     - `SPACE.current_status` no longer carries `Under Maintenance`; maintenance blocking is delegated to `MAINTENANCE_RECORD` overlap where `impact_level = 'out-of-service'`.
+     - End users submit `INCIDENT_REPORT`; manager/staff triage consolidates duplicate reports into one `MAINTENANCE_RECORD` and decides `impact_level`.
 3. **Business Rule Impact**: For every affected business rule from Phase 1, state clearly whether it is:
    - **Kept unchanged**, or
    - **Refined** (its condition changes), and describe the new condition, or
@@ -26,6 +29,7 @@ Analyze the Phase 2 requirement changes, translate them into a structured list o
    - The exact operation sequence (two concurrent operations and the point where a check-then-act interleaving breaks correctness).
    - The undesirable outcome if not controlled (e.g., data integrity violation, lost update, double-effort, inconsistent state).
    - Which business rule / invariant is threatened.
+   Include at least one conflict around duplicate `INCIDENT_REPORT` submissions and manager consolidation into a single maintenance record.
 5. **Assumptions & Open Questions**:
    - Record any decision you must make that the requirement did not spell out.
    - Record any ambiguity or missing detail as an open question for confirmation.
