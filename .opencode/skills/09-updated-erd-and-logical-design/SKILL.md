@@ -18,7 +18,6 @@ Produce the Phase 2 versions of the conceptual ERD and the logical relational sc
    - Add any new attributes to existing entities. Distinctly mark added vs. retained attributes.
    - Explicitly include the `INCIDENT_REPORT` lifecycle (user report intake, triage linkage to `MAINTENANCE_RECORD`, and duplicate-report consolidation path).
    - Explicitly model the report-target hierarchy so an incident can target a room, a facility type inside that room, or a specific tracked asset. Show the relationship chain `SPACE` → `SPACE_FACILITY` → `FACILITY_ASSET` and optional participation from `INCIDENT_REPORT` to facility/asset targets.
-   - Keep the Phase 2 ERD conceptual: do not show FK columns or FK markers as attributes inside entities; represent cross-entity links through relationships/cardinality only.
    - Keep all Phase 1 relationships/entities that remain valid. Do not delete real ones; only preserve and extend.
    - Include an updated Mermaid `erDiagram` block showing the full updated model.
 3. **Relational Schema Update (Logical)**:
