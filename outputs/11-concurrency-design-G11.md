@@ -1,153 +1,182 @@
 # Concurrency Control Design - G11 (Phase 2)
 
-**Scope:** Prevent conflicting approved bookings and duplicate maintenance consolidation under the Phase 2 operating conditions (instant booking + staff approval executed concurrently).
+## 1. Core Conflicts
 
-**Inputs:**
-- `req/business-requirement.md` — "Concurrent Booking and Approval"
-- `outputs/08-requirement-change-analysis-G11.md` — Conflicts A–D
-- `outputs/09-updated-erd-and-logical-design-G11.md` — table structures
+### 1a. Race: Two concurrent instant-booking transactions on the same space
 
----
+Two users request the same space `S` for overlapping windows `[t1,t2)` and `[t3,t4)` at nearly the same moment:
 
-## 1. Core Conflict
+| Step | T1 (instant booking) | T2 (instant booking) |
+| :--- | :--- | :--- |
+| 1 | `SELECT` bookings for S, no overlap found | `SELECT` bookings for S, no overlap found |
+| 2 | INSERT booking B1 → Approved | INSERT booking B2 → Approved |
+| 3 | COMMIT | COMMIT |
 
-### 1.1 The race condition (lost serialization of the overlap check)
+Both transactions read availability *before* either writes, so both pass the check and both commit. Result: two approved overlapping bookings — a direct violation of BR-01.
 
-The invariant (BR-01 / BR-11) is: **two approved bookings on the same space must never overlap**, and **no approved booking may overlap an `out-of-service` maintenance window**.
+### 1b. Race: Instant booking vs. staff approval
 
-The check-then-act pattern that breaks:
+| Step | T1 (staff approval of pending B1) | T2 (instant booking of B2) |
+| :--- | :--- | :--- |
+| 1 | `SELECT` availability for B1's window → free | — |
+| 2 | — | INSERT B2 (overlaps B1) → Approved, COMMIT |
+| 3 | UPDATE B1 status → Approved, COMMIT | — |
 
-| Step | Tx1 (instant booking) | Tx2 (staff approval) |
-| :-- | :--- | :--- |
-| 1 | `SELECT` approved bookings for space S over [t1,t2] → none | `SELECT` approved bookings for space S over [t1,t2] → none |
-| 2 | *(both see "free")* | *(both see "free")* |
-| 3 | `INSERT` booking B1, `INSERT` approval A1, COMMIT | `INSERT` booking B2 (overlaps B1), `INSERT` approval A2, COMMIT |
+The staff transaction approves B1 based on a stale availability read; B2 committed in the middle. Result: B1 and B2 overlap — BR-01 violation.
 
-At step 1–2 both transactions hold only shared `S` locks that are released at the end of each statement (READ COMMITTED). Nothing serialises the two reads, so both pass the availability check and both commit — **double-booking**.
+### 1c. Maintenance-gating rule incorporated
 
-### 1.2 Maintenance-gating refinement
+Blocking is **not** based on `SPACE.current_status` (which no longer contains `Under Maintenance`). A booking window is blocked only when there exists a `MAINTENANCE_RECORD` for the space whose time window overlaps `[requested_start, requested_end)` **and** `impact_level = 'out-of-service'`. `impact_level = 'advisory'` must never block; it only requires notification + acknowledgement.
 
-The Phase 2 availability check must now consult **both** sources, under the same serialised read:
+The concurrency design must therefore protect **two invariants atomically**:
+- **INV-1:** no two approved bookings overlap on the same space;
+- **INV-2:** no approved booking overlaps an out-of-service maintenance window.
 
-1. **Operational state:** `spaces.current_status` must not be `'Temporarily Closed'` or `'Retired'`.
-2. **Maintenance blocking:** reject only when there is a `MAINTENANCE_RECORD` with `impact_level = 'out-of-service'` whose `[start_time, completion_time)` overlaps `[t1,t2]`.
-   - `advisory` records never block (BR-12); they are surfaced as notifications.
-3. **Overlap:** reject when an existing approved/checked-in booking on the same space overlaps `[t1,t2]`.
+## 2. Evaluated Strategies
 
-The concurrency danger is that two transactions both read "no out-of-service record / no overlapping booking" and then both commit. The lock design below serialises this read set.
+### Strategy A — Pessimistic locking with range-lock table hints
+The booking procedure runs inside an explicit transaction and takes range locks on the serialization points:
 
----
-
-## 2. Strategy Evaluation
-
-| Criterion | Pessimistic lock: `SERIALIZABLE` + `WITH (UPDLOCK, HOLDLOCK)` | Optimistic: `SNAPSHOT ISOLATION` | Optimistic: manual version / timestamp |
-| :--- | :--- | :--- | :--- |
-| Overlap safety | Guaranteed: range lock on the key range prevents phantom inserts of conflicting bookings | Not by itself — writer-writer conflicts surface as update conflicts at commit; must add a conflict-detection retry loop | Must implement app-level version columns on every read-modify path; error-prone |
-| Complexity in SQL Server | Low — pure T-SQL hints + isolation level inside the stored procedure | Medium — enable `ALLOW_SNAPSHOT_ISOLATION`, add retry/`UPDATE` conflict handling | High — extra columns, app logic, no DB guarantee |
-| Throughput under high concurrency on the *same* hot space | Contended (one tx at a time per space) — acceptable because popular spaces are exactly where correctness matters most | High (writers don't block readers) but requires retries; can livelock under heavy contention | High but unsafe without careful coding |
-| Impact on "beginning of semester" burst | Predictable serialisation; requests queue on the same space | Retry storms on the hot space; users may see repeated `UPDATE CONFLICT` failures | Unbounded risk |
-| Fits existing schema (no version columns) | Yes — no schema change beyond indexes | Yes — but needs conflict-detection SQL in every proc | Requires new columns + refactor |
-| **Verdict** | **Selected** | Rejected for the write path | Rejected |
-
-### 2.1 Why pessimistic serialization is chosen
-
-1. **Correctness is the hard requirement.** The semester-start burst makes optimistic retries unbounded and user-visible; pessimistic serialisation converts the race into a clean queue.
-2. **Contention is naturally scoped.** The lock key is the **space** (with a bounded time range), not the whole table, so different spaces still book in parallel.
-3. **No schema burden.** No version/timestamp columns are required; the existing `IX_bookings_space_time` index supports the range-lock.
-4. **Single code path.** Both the instant-booking path and the staff-approval path call the same guarded procedure, so both inherit the same guarantee.
-
----
-
-## 3. Selected Design
-
-### 3.1 Isolation level and lock hints
-
-- Procedure isolation: `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;`
-- Availability read on `bookings`:
-  ```sql
-  SELECT ... FROM dbo.bookings WITH (UPDLOCK, HOLDLOCK)
-  WHERE space_id = @space_id AND status IN ('Approved','Checked In')
-    AND start_time < @end_time AND end_time > @start_time;
-  ```
-  - `UPDLOCK` → takes update locks, not shared, so a concurrent transaction's matching read blocks instead of both passing.
-  - `HOLDLOCK` → holds the range lock until commit, preventing phantom conflicting bookings from being inserted between read and insert (the classic double-booking window).
-- The same pattern is applied on `maintenance_records` for the `out-of-service` overlap check (with `HOLDLOCK` so an escalation to `out-of-service` committed later cannot slip past a validation that already saw only advisory records).
-
-> The `IX_bookings_space_time (space_id, start_time, end_time)` index from the migration makes the range lock an **index key-range lock** rather than a coarse table lock.
-
-### 3.2 Locking key: space + time range
-
-All concurrency-sensitive operations acquire locks on the **space's booking range** before writing. This serialises conflicting requests for the same space while allowing independent spaces to proceed concurrently.
-
-### 3.3 Transaction flow (single guaranteed template)
-
-```
-SET XACT_ABORT ON;
-SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
-BEGIN TRAN;
-
--- 1. Serializable availability gate (locks the space-time range)
-SELECT ... FROM bookings WITH (UPDLOCK, HOLDLOCK)   -- overlapping approved/checked-in
-SELECT ... FROM maintenance_records WITH (UPDLOCK, HOLDLOCK)
-          WHERE impact_level = 'out-of-service' AND overlaps;  -- blocking maintenance
-
-IF conflict_found THEN ROLLBACK / return status 'conflict';
-
--- 2. Collect active advisories (impact_level = 'advisory', overlapping window)
---    for the notification + acknowledgement snapshot.
-
--- 3. Insert booking (status depends on path: Pending for staff, Approved for instant)
--- 4. Insert/update approval (staff_id = @staff_id or NULL for auto-approval)
--- 5. Insert advisory_acknowledgements rows if advisories were surfaced
-COMMIT;
+```sql
+BEGIN TRAN
+SELECT ...
+  FROM dbo.bookings
+ WHERE space_id = @space_id
+   AND status IN (...)
+   AND start_time < @end_time
+   AND end_time   > @start_time
+  WITH (UPDLOCK, HOLDLOCK);   -- serializes concurrent overlapping probes
+...
+COMMIT
 ```
 
-**Invariant enforced by construction:** because every approval path (instant and staff) enters through this template, at most one transaction can hold the range lock for a given space-time overlap at a time; the second sees the first's committed booking and is rejected.
+- **Integrity:** strong — the `UPDLOCK, HOLDLOCK` range lock blocks a concurrent overlapping probe until the first transaction commits, so the second probe sees the committed row.
+- **Performance:** locks are held to the end of the transaction; contention on a hot space is possible but booking windows are short and each transaction is small.
+- **Complexity:** low — no database-wide setting required; hints are local to the procedure.
 
----
+### Strategy B — Optimistic concurrency (SNAPSHOT ISOLATION)
+Reads use snapshot versions; conflicts are detected at write time via update conflicts.
 
-## 4. Incident-to-Maintenance Triage Concurrency
+- **Integrity:** snapshot isolation alone does **not** prevent the phantom-row anomaly that produces two overlapping bookings, because both transactions read an empty snapshot and then insert new rows (no update conflict is detected on inserted data).
+- **Performance:** excellent read concurrency.
+- **Complexity:** moderate (needs `READ_COMMITTED_SNAPSHOT`/`ALLOW_SNAPSHOT_ISOLATION`, retry logic in the application).
+- **Limitation:** requires application-level retry loops and cannot guarantee INV-1 by itself — a phantom insert can still slip through unless serializable range locks are used.
 
-### 4.1 The race
+### Strategy C — SERIALIZABLE isolation level
+Elevates the whole transaction to serializable.
 
-Two managers concurrently consolidate overlapping duplicate incident reports into maintenance records (Conflict C):
+- **Integrity:** the overlap `SELECT` acquires range locks (key-range + next-key locks) that suppress phantoms — equivalent in effect to Strategy A's hints but applied to every statement.
+- **Performance:** more locking overhead than targeted hints.
+- **Complexity:** low, but locks more than necessary (e.g., the user lookup, space lookup) and raises deadlock risk on unrelated hot keys.
 
-| Step | Manager A | Manager B |
-| :-- | :--- | :--- |
-| 1 | Reads incident reports R1, R2, R3 | Reads incident reports R2, R3 |
-| 2 | Inserts `MAINTENANCE_RECORD` M1 | Inserts `MAINTENANCE_RECORD` M2 |
-| 3 | Links R1, R2 → M1 | Links R2, R3 → M2 |
+## 3. Selected Strategy & Justification
 
-R2 ends up mapped to **two** maintenance records → duplicate repair work, ambiguous impact-level authority.
+**Selected: Strategy A — pessimistic locking with `UPDLOCK, HOLDLOCK` range locks** inside dedicated stored procedures, wrapped in explicit transactions.
 
-### 4.2 Guard
+Justification:
+1. **Integrity guarantee:** `UPDLOCK, HOLDLOCK` acquires update + range-stable locks on the probe scan. Two concurrent overlapping probes for the same space serialize on the same range key, so the second probe blocks until the first commits; the second then sees the committed booking and rejects. This directly prevents both Conflict 1a and 1b (INV-1), and the same mechanism protects the maintenance probe (INV-2).
+2. **Deterministic:** no retry logic, no application round-trips. SQL Server guarantees the result — important for a teaching/semester spike with many concurrent submitters.
+3. **Performance fit:** booking/approval transactions are tiny (a few rows), and contention is per-space-range; locks are released at commit. This matches the semester-start burst pattern well.
+4. **Simplicity:** local to procedures; no `ALTER DATABASE` isolation settings, no app-side retry.
 
-1. **Schema-level:** `report_consolidations.incident_report_id` is `UNIQUE` (from step 9) — an incident report can be consolidated into **at most one** maintenance record. This makes the second `INSERT` of a duplicate link a PK/UNIQUE violation instead of silent duplication.
-2. **Transaction-level:** the triage procedure:
-   - Reads the candidate incident reports with `WITH (UPDLOCK, HOLDLOCK)` (serialisable),
-   - Re-checks whether any is already consolidated,
-   - Inserts the `MAINTENANCE_RECORD` and the consolidation links in one transaction.
-   - On a UNIQUE-violation (a lost race), the loser catches `2627` and rolls back, returning a "report already consolidated" status.
-3. **Effect:** even if two managers run the same triage concurrently, at most one consolidation row per incident report is ever committed; the other aborts cleanly.
+SERIALIZABLE (Strategy C) was rejected because it over-locks (space/user lookups) and increases deadlock risk without adding integrity beyond the targeted hints. SNAPSHOT (Strategy B) was rejected because it cannot, by itself, prevent phantom inserts → double-booking.
 
----
+## 4. Transaction Flow Design
 
-## 5. Summary of Guarantees
+### 4a. Instant-booking (auto-approval path) — `sp_book_space_instant` / `sp_AutoApproveBookingRequest`
 
-| Guarantee | Mechanism |
+```
+BEGIN TRAN
+  1. Take range lock on the space row (serialize per-space triage):
+       SELECT ... FROM dbo.spaces WITH (UPDLOCK, ROWLOCK)
+        WHERE space_id = @space_id;
+  2. Probe maintenance (INV-2) with range lock:
+       SELECT ... FROM dbo.maintenance_records WITH (UPDLOCK, HOLDLOCK)
+        WHERE space_id = @space_id
+          AND impact_level = 'out-of-service'
+          AND start_time   < @end_time
+          AND completion_time IS NULL OR completion_time > @start_time;
+       -> if any row: ROLLBACK, return 'blocked by out-of-service maintenance'.
+  3. Probe bookings (INV-1) with range lock:
+       SELECT ... FROM dbo.bookings WITH (UPDLOCK, HOLDLOCK)
+        WHERE space_id = @space_id
+          AND status IN ('Approved','Checked In','Completed')
+          AND start_time < @end_time AND end_time > @start_time;
+       -> if any row: ROLLBACK, return 'conflict'.
+  4. Check policy + auto-booking flag:
+       IF auto_booking_enabled = 0 OR usage policy fails -> ROLLBACK, return 'not auto-approvable'.
+  5. INSERT bookings row (status = 'Approved').
+  6. INSERT approvals row with staff_id = NULL, decision_time = now,
+     decision_note = 'Auto-approved'.
+COMMIT
+```
+
+Key point: steps 2 and 3 hold `UPDLOCK, HOLDLOCK` until commit, which is what makes two concurrent overlapping probes serialize.
+
+### 4b. Staff-approval path — `sp_book_space_staff_approve`
+
+```
+BEGIN TRAN
+  1. Take range lock on space row (UPDLOCK).
+  2. Probe out-of-service maintenance overlap (UPDLOCK, HOLDLOCK) -> block if found.
+  3. Probe approved-booking overlap (UPDLOCK, HOLDLOCK) -> block if found.
+  4. UPDATE bookings SET status = 'Approved' WHERE booking_id = @booking_id
+     (guarded by optimistic WHERE status = 'Pending').
+  5. INSERT approvals row with staff_id = @staff_id (non-NULL).
+COMMIT
+```
+
+Because step 3 uses the same range lock as the instant path, a concurrent instant booking of an overlapping window cannot commit between this transaction's check and its insert/update.
+
+### 4c. Locking note on the probe query
+
+The overlap predicate must be SARG-able and cover both directions:
+```sql
+start_time < @end_time AND end_time > @start_time
+```
+The `IX_bookings_space_time` index `(space_id, start_time, end_time)` (from migration Section 8) makes this a narrow range scan, so `UPDLOCK, HOLDLOCK` locks only the relevant key range rather than the whole table.
+
+## 5. Incident-to-Maintenance Triage Concurrency
+
+**Problem:** Two managers triage overlapping/duplicate `INCIDENT_REPORT` sets concurrently and each creates a `MAINTENANCE_RECORD`, producing duplicate maintenance work and double consolidation.
+
+**Design:** a dedicated procedure `sp_consolidate_incident_reports`:
+
+```
+BEGIN TRAN
+  1. Range-lock the candidate report rows:
+       SELECT ... FROM dbo.incident_reports WITH (UPDLOCK, HOLDLOCK)
+        WHERE report_id IN (SELECT ...) AND status = 'Open';
+  2. Check whether ANY of the reports is already linked to a maintenance record:
+       SELECT TOP 1 maintenance_id FROM dbo.report_consolidations WITH (UPDLOCK, HOLDLOCK)
+        WHERE incident_report_id IN (...);
+       -> if found, reuse that maintenance_id (dedupe) and do NOT create a new one.
+  3. If none: INSERT maintenance_records (impact_level DEFAULT 'advisory';
+     manager may escalate later via sp_set_maintenance_impact).
+  4. INSERT report_consolidations rows mapping each report -> the single maintenance_id.
+  5. UPDATE incident_reports SET status = 'Consolidated'.
+COMMIT
+```
+
+The `UQ_consolidations_incident UNIQUE(incident_report_id)` constraint is a second line of defense: a duplicate consolidation INSERT for the same report is rejected even if the lock window is missed. `sp_set_maintenance_impact` is a separate short transaction so escalation decisions remain the exclusive authority of triage (BR-12) and do not race with booking probes (a booking probe that starts after the escalation commit will see the new `impact_level`).
+
+## 6. Isolation Level Summary
+
+| Aspect | Choice |
 | :--- | :--- |
-| No overlapping approved bookings under concurrency | `SERIALIZABLE` + `UPDLOCK, HOLDLOCK` range locks on `bookings` (space-time) inside the single booking template |
-| Maintenance blocking only via `out-of-service` | Same guarded read on `maintenance_records` with `impact_level = 'out-of-service'`; `advisory` never blocks |
-| Escalation race closed | `HOLDLOCK` on the maintenance read prevents an `out-of-service` escalation committed mid-transaction from being missed |
-| No duplicate maintenance consolidation | `UNIQUE (incident_report_id)` in `report_consolidations` + serialisable triage transaction + 2627 handling |
-| Auto vs. manual approval parity | Both paths share the same template → identical correctness |
-| Throughput | Locks are scoped to a space's time range, not the whole table; distinct spaces run in parallel |
+| Isolation level | READ COMMITTED (default), with targeted `UPDLOCK, HOLDLOCK` range locks in procedures |
+| Lock granularity | Row / key-range, scoped to the probed space + time window |
+| Blocking sources | `bookings` (INV-1), `maintenance_records` `out-of-service` (INV-2) |
+| Advisory maintenance | Never blocks; only notifies + acknowledges |
+| Deadlock posture | Short transactions, consistent lock order (space → maintenance → bookings), single-writer pattern |
+| Triage dedup | Range lock on incident_reports + UNIQUE constraint + single maintenance per report set |
 
----
+## 7. Mapping to Conflicts
 
-## 6. Implementation Reference
-
-The exact T-SQL implementing this design is in `outputs/12-concurrency-implementation-G11.sql`:
-- `sp_book_space_staff_approve` — staff-approval path with serialisable overlap gate.
-- `sp_AutoApproveBookingRequest` — instant/auto-approval path with the same gate plus the `spaces.AutoBookingEnabled = 1` and usage-policy checks; records `approvals.staff_id = NULL`.
-- `sp_set_maintenance_impact` — escalation/downgrade helper used by triage and escalation reporting.
+| Conflict (from Step 8) | Protected by |
+| :--- | :--- |
+| A — instant vs. instant | 4a step 3 range lock |
+| B — instant vs. staff approval | 4a/4b shared probe lock order |
+| C — duplicate incident + consolidation | Section 5 dedup procedure |
+| D — escalation vs. concurrent approval | 4a/4b step 2 + short escalation transaction |
+| E — concurrent auto-approval same space | 4a step 1 space lock + step 3 range lock |

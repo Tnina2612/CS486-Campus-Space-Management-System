@@ -1,14 +1,16 @@
 -- =============================================================================
--- tx1_instant_booking.sql
--- Simulates USER A auto-booking Room A (space "TEST-ROOM-A") from 09:00 to
--- 11:00 on the test date via sp_AutoApproveBookingRequest.
+-- tx2_instant_booking.sql
+-- Simulates USER B auto-booking Room A (space "TEST-ROOM-A") from 10:00 to
+-- 12:00 on the test date via sp_AutoApproveBookingRequest. This window overlaps
+-- tx1_instant_booking.sql (09:00-11:00), exercising the SAME-FLOW race
+-- (two concurrent instant bookings).
 --
 -- Placeholders {{USER_ID}} and {{SPACE_ID}} are replaced by
 -- test_concurrency.py at runtime.
 --
 -- Expected behaviour:
 --   * If this transaction wins the race it commits and returns AUTO_APPROVED.
---   * If a concurrent approved booking already overlaps, the procedure raises
+--   * If the concurrent instant booking committed first, the procedure raises
 --     and the TRY/CATCH maps the outcome to OVERLAP (BR-01 protected).
 --
 -- The final SELECT returns result_status so the runner can classify the
@@ -20,10 +22,10 @@ BEGIN TRY
     EXEC dbo.sp_AutoApproveBookingRequest
         @user_id               = {{USER_ID}},
         @space_id              = {{SPACE_ID}},
-        @start_time            = '{{TEST_DATE}} 09:00:00',
-        @end_time              = '{{TEST_DATE}} 11:00:00',
-        @purpose               = N'Seminar',
-        @expected_participants = 10;
+        @start_time            = '{{TEST_DATE}} 10:00:00',
+        @end_time              = '{{TEST_DATE}} 12:00:00',
+        @purpose               = N'Workshop',
+        @expected_participants = 12;
     SET @rs = N'AUTO_APPROVED';
 END TRY
 BEGIN CATCH

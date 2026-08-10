@@ -1,124 +1,133 @@
 # Requirement Change Analysis - G11 (Phase 2)
 
-> Baseline: Phase 1 outputs `01`–`04`. Source of truth for changes: `req/business-requirement.md` § Phase 2 Extensions.
-> This document only records **what changes** and **what must be designed/protected**; no design or implementation is performed here.
+## 1. Requirement Change Inventory
 
----
+The Facility Manager introduces three families of Phase 2 changes on top of the Phase 1 baseline (`req/business-requirement.md`, Phase 2 Extensions):
 
-## 1. Change Inventory
+| ID | New / Changed Rule or Operating Condition | Phase 1 Element Affected | Nature of Effect | Knock-on Effects |
+| :--- | :--- | :--- | :--- | :--- |
+| RC-01 | Maintenance work splits into two impact levels: `out-of-service` (space unusable) and `advisory` (space usable, requester must be notified + acknowledgement recorded). | `SPACE.current_status` value set, `MAINTENANCE_RECORD`, `BOOKING` | Attribute added (`MAINTENANCE_RECORD.impact_level`), status range reduced on `SPACE.current_status`, existing rule refined. | Booking availability check logic, advisory acknowledgement storage, affected-booking identification on escalation. |
+| RC-02 | A space may have several concurrently active maintenance records with different impact levels. | `MAINTENANCE_RECORD` | New allowed state (multiple open records per space). No schema conflict; operational rule. | Availability checks must consider all overlapping records, not a single status. |
+| RC-03 | `impact_level` may be escalated/downgraded while maintenance is open; on escalation to `out-of-service`, already-approved overlapping bookings must be identified. | `MAINTENANCE_RECORD.impact_level`, `BOOKING.status`, `BOOKING.start_time/end_time` | New attribute update path + new reporting query. | Escalation report (approved bookings overlapped by maintenance window). |
+| RC-04 | End users submit incident reports; manager/staff triage consolidates duplicate reports into one maintenance record and decides `impact_level`. | New entity `INCIDENT_REPORT`, new M:N via `REPORT_CONSOLIDATION` | New entity + relationship added. | `MAINTENANCE_RECORD.impact_level` default `advisory`; decision authority stays on maintenance, not reports. |
+| RC-05 | Booking blocking must read only `MAINTENANCE_RECORD` with `impact_level = 'out-of-service'`; unresolved/duplicate `INCIDENT_REPORT` rows must be ignored for blocking. | Booking availability rule (BR-02) | Rule delegated/refined (blocking source changes). | Concurrency-safe availability check procedure. |
+| RC-06 | Auto-booking for selected space types: requests satisfying usage policy auto-approved at submission. | `SPACE` (new flag), `APPROVAL` (nullable staff), `BOOKING.status` | Attribute added (`SPACE.auto_booking_enabled BIT NOT NULL DEFAULT 0`); `APPROVAL.staff_id` becomes nullable. | Automatic approval procedure, concurrency with staff approval. |
+| RC-07 | Two approved bookings must never overlap on the same space even under concurrent instant-booking and staff-approval operations. | BR-01 (no-overlap rule) | Rule strengthened with concurrency requirement. | Locking/isolation strategy, transactional stored procedures. |
+| RC-08 | Reporting target must be normalized: a report can target a room, a facility type within the room, or a specific tracked asset. | `SPACE_FACILITY`, `FACILITY_ASSET`, new `INCIDENT_REPORT` | `SPACE_FACILITY` gains surrogate key `space_facility_id`; `FACILITY_ASSET` re-pointed to it; `INCIDENT_REPORT` gains nullable target columns. | New FK integrity rule (`asset_id` requires matching `space_facility_id`). |
 
-| # | New/Changed Statement (from requirement) | Affected Phase 1 element | Nature of effect | Knock-on effect |
-| :-- | :--- | :--- | :--- | :--- |
-| C1 | Maintenance now has **impact levels**: `out-of-service` blocks overlapping bookings; `advisory` does not block but requires notification + acknowledgement. | `MAINTENANCE_RECORD` | New attribute `impact_level` on `MAINTENANCE_RECORD`; new refinement of BR-02 | Booking-blocking logic must read only `MAINTENANCE_RECORD`; `SPACE.current_status` decoupled from maintenance |
-| C2 | `SPACE.current_status` no longer carries `Under Maintenance`. | `SPACE.current_status` | Status domain **shrinks**: remove `Under Maintenance` from allowed value set | All Phase 1 queries/constraints referencing `'Under Maintenance'` must be updated; existing rows must be migrated |
-| C3 | A space may have **several active maintenance records** at once with different impact levels. | `MAINTENANCE_RECORD` × `SPACE` (1:N) | Existing relationship retained; no cardinality change needed, but validation no longer assumes a single active record per space | Overlap logic must evaluate **each** open record, not a single status flag |
-| C4 | Impact level may be **escalated/downgraded** while the record is open. | `MAINTENANCE_RECORD.impact_level` | Attribute is mutable after insert (no longer static) | Approved bookings overlapping an escalated record must be **findable** (new report) |
-| C5 | **Advisory acknowledgement**: requester must be notified of all active advisories at booking time and the acknowledgement stored with the booking. | `BOOKING` + `MAINTENANCE_RECORD` | New relationship `BOOKING` ⇄ `MAINTENANCE_RECORD` (advisory) — M:N acknowledgement history | New table (e.g., `BOOKING_ADVISORY_ACKNOWLEDGEMENT`), snapshot of advisories at booking time |
-| C6 | **Auto-booking**: for selected space types, requests satisfying the usage policy may be approved automatically at submission. | `SPACE`, `BOOKING`, `APPROVAL` | New attribute `SPACE.AutoBookingEnabled BIT`; new automated approval flow | Approval no longer always requires a human; `APPROVAL.staff_id` must become nullable |
-| C7 | **Approval by machine**: auto-approved requests must not record a staff member. | `APPROVAL.staff_id` | `APPROVAL.staff_id` changes from `NOT NULL` to nullable `NULL` | Existing approval rows preserved; manual approvals still record staff |
-| C8 | **Incident intake separated from maintenance authority**: end users submit `INCIDENT_REPORT`; staff/manager triage consolidates duplicates into one `MAINTENANCE_RECORD` and decides `impact_level`. | New entity `INCIDENT_REPORT`; `MAINTENANCE_RECORD.reporter_id` semantics | New entity + new M:N relationship (many incident reports → one maintenance record); `impact_level` authority stays on `MAINTENANCE_RECORD` | Booking checks must ignore `INCIDENT_REPORT` entirely |
-| C9 | **Concurrency**: many users submit overlapping requests at once; conflicting bookings must never both be approved. | `BOOKING` approval flow | Business rule BR-01 must hold under concurrency — requires locking/isolation strategy | `sp_AutoApproveBookingRequest` and staff-approval path must be concurrency-safe |
-| C10 | **Reporting**: 4 new reports (semester hours, weekday/hour distribution, capacity+facility availability, escalation-affected bookings). | Cross-table queries | New analytical/reporting queries | Supported by indexes (Step 9) |
+### Mandatory coverage checklist
 
----
+- [x] `SPACE.current_status` no longer carries `Under Maintenance`; maintenance blocking delegated to `MAINTENANCE_RECORD` overlap where `impact_level = 'out-of-service'`.
+- [x] End users submit `INCIDENT_REPORT`; manager/staff triage consolidates duplicate reports into one `MAINTENANCE_RECORD` and decides `impact_level`, defaulting to `'advisory'` unless escalated.
+- [x] Reporting target normalized through a facility-instance layer (room / facility-type-in-room / specific asset).
+- [x] `SPACE_FACILITY` evolves to surrogate-key entity with `space_facility_id`; `FACILITY_ASSET` references that entity; `INCIDENT_REPORT` carries nullable `space_facility_id` and `asset_id` with the rule that `asset_id` requires a non-null `space_facility_id` and a matching asset-to-facility relationship.
 
 ## 2. Affected Entities / Relationships / Attributes
 
-| Element | Type | Phase 1 state | Phase 2 change |
+| Entity | Phase 1 | Phase 2 Change | Details |
 | :--- | :--- | :--- | :--- |
-| `SPACE.current_status` | Attribute | CHECK includes `'Under Maintenance'` | Remove `'Under Maintenance'` from domain; represent only broad operational state |
-| `SPACE.AutoBookingEnabled` | Attribute | (absent) | New `BIT NOT NULL DEFAULT (0)` |
-| `MAINTENANCE_RECORD.impact_level` | Attribute | (absent) | New `NVARCHAR` with domain `{'out-of-service','advisory'}`; mutable while open |
-| `APPROVAL.staff_id` | Attribute | `NOT NULL` FK → `users` | Make nullable; keep FK; auto-approvals store `NULL` |
-| `BOOKING` | Entity | lifecycle states | Add advisory-snapshot/acknowledgement linkage (C5) |
-| `INCIDENT_REPORT` | Entity | (absent) | **New** entity — end-user issue submissions |
-| `INCIDENT_REPORT` → `MAINTENANCE_RECORD` | Relationship | (absent) | **New** M:N consolidation (duplicates merged into one maintenance record) |
-| `BOOKING` → `MAINTENANCE_RECORD` (advisory) | Relationship | (absent) | **New** M:N acknowledgement association |
-| `APPROVAL` lifecycle | Business flow | Always human decision | Add machine decision path with `staff_id = NULL` |
-| Booking availability check | Business logic | Reads `SPACE.current_status` | Reads `MAINTENANCE_RECORD` where `impact_level = 'out-of-service'` and time-overlap |
+| `spaces` | `current_status` CHECK includes `Under Maintenance` | **Refined** — remove `Under Maintenance` from CHECK | `current_status` becomes operational-state-only: Available, In Use, Temporarily Closed, Retired. |
+| `spaces` | — | **Attribute added** | `auto_booking_enabled BIT NOT NULL DEFAULT (0)`. |
+| `space_facility` | Composite PK `(space_id, catalog_id)` | **Normalized** — surrogate key added | New `space_facility_id INT IDENTITY` PK; `(space_id, catalog_id)` kept as `UNIQUE`. |
+| `facility_assets` | FK on `space_id`, `catalog_id` | **Re-pointed** | New `space_facility_id` FK → `space_facility(space_facility_id)`; existing data backfilled. |
+| `maintenance_records` | No `impact_level` | **Attribute added** | `impact_level NVARCHAR(20) NOT NULL DEFAULT 'advisory'` CHECK IN ('advisory','out-of-service'). |
+| `approvals` | `staff_id INT NOT NULL` | **Relaxed** | `staff_id` becomes `NULL`-able; auto-approvals store `NULL`. |
+| `bookings` | status set | **Attribute added** | `advisory_acknowledged BIT`, `advisory_snapshot NVARCHAR(MAX)` to record notification + acknowledgement. |
+| `incident_reports` | *(new)* | **Entity added** | Room/facility/asset target columns + consolidation status. |
+| `report_consolidations` | *(new)* | **Entity added** | M:N between `incident_reports` and `maintenance_records` (many reports → one maintenance). |
+| `advisory_acknowledgements` | *(new)* | **Entity added** | Records per-booking acknowledgement of active advisories. |
 
----
+### New relationships
+
+| Left | Cardinality | Right | Label |
+| :--- | :--- | :--- | :--- |
+| USER | 1:N | INCIDENT_REPORT | submits |
+| INCIDENT_REPORT | M:N | MAINTENANCE_RECORD | consolidated via REPORT_CONSOLIDATION |
+| SPACE | 1:N | INCIDENT_REPORT | has |
+| SPACE_FACILITY | 1:N | FACILITY_ASSET | instances |
+| SPACE_FACILITY | 1:N | INCIDENT_REPORT | targeted_by (optional) |
+| FACILITY_ASSET | 1:N | INCIDENT_REPORT | targeted_by (optional) |
+| BOOKING | 1:N | ADVISORY_ACKNOWLEDGEMENT | records |
+| MAINTENANCE_RECORD | 1:N | ADVISORY_ACKNOWLEDGEMENT | acknowledged_for |
 
 ## 3. Business Rule Impact
 
-| Phase 1 Rule | Status | Phase 2 disposition |
+| Rule ID (Phase 1) | Status | New Condition |
 | :--- | :--- | :--- |
-| BR-01 — No two approved bookings overlap on the same space | **Kept unchanged + hardened** | Invariant still absolute; now additionally enforced under concurrency via locking/isolation in both auto-approval and staff-approval paths |
-| BR-02 — Unavailable spaces cannot be booked | **Refined** | "Under maintenance" blocking is **delegated** to `MAINTENANCE_RECORD` overlap where `impact_level = 'out-of-service'`; `advisory` maintenance does **not** block; `Temporarily Closed`/`Retired` remain blocking via `SPACE.current_status` |
-| BR-03 — Approval records staff member, time, note | **Refined** | For manual approvals unchanged; for auto-approval `staff_id` is `NULL` (system is the decider); time and note still recorded |
-| BR-04 — Rejection reason required when rejected | **Kept unchanged** | Unchanged |
-| BR-05 / BR-06 — Check-in / check-out recording | **Kept unchanged** | Unchanged |
-| BR-07 — Historical record preservation | **Kept unchanged** | New `INCIDENT_REPORT` history also preserved; consolidation must not delete reports |
-| BR-08 — Staff view queries | **Extended** | New views/reports: escalation-affected bookings, available spaces by capacity+facilities |
-| BR-09 — Strict 1:1 `BOOKING`↔`APPROVAL`, `BOOKING`↔`USAGE_SESSION` | **Kept unchanged** | Unchanged; auto-approval still creates exactly one `APPROVAL` row |
-| BR-10 — Hybrid facility pattern | **Kept unchanged** | Unchanged; feeds capacity+facility availability report |
-
-**New Phase 2 rules introduced:**
-- **BR-11** — A space with an active `out-of-service` maintenance record cannot be booked for any overlapping time period (delegated to concurrency logic).
-- **BR-12** — Advisory maintenance does not block; all active advisories must be surfaced to the requester and an acknowledgement recorded with the booking.
-- **BR-13** — Auto-approval is allowed only when the target space has `SPACE.AutoBookingEnabled = 1` and the request satisfies the space usage policy; otherwise it follows staff approval.
-- **BR-14** — Auto-approval must set `APPROVAL.staff_id = NULL` (no human decider).
-- **BR-15** — `impact_level` authority rests solely on `MAINTENANCE_RECORD` (staff/manager triage); `INCIDENT_REPORT` rows never participate in booking blocking.
-
----
+| BR-01 | **Strengthened** | No two approved bookings overlap on the same space — now must hold under concurrency (instant + staff approval). Enforced by DB stored procedures with locking. |
+| BR-02 | **Refined** | A space cannot be booked when it is `Temporarily Closed`/`Retired`, OR when a `MAINTENANCE_RECORD` with `impact_level='out-of-service'` overlaps the requested window. Advisory maintenance does **not** block. `current_status` no longer has `Under Maintenance`. |
+| BR-03 | **Refined** | Decision time + note always recorded. `staff_id` is `NULL` for automatic approvals, non-`NULL` for manual staff decisions. |
+| BR-04 | Kept unchanged | Rejection reason required when rejected. |
+| BR-05 | Kept unchanged | Check-in fields recorded. |
+| BR-06 | Kept unchanged | Check-out fields recorded. |
+| BR-07 | Kept unchanged | Historical preservation (NO ACTION on FKs). |
+| BR-08 | **Extended** | Views extended: spaces under out-of-service maintenance, advisory-aware booking history, affected bookings on escalation. |
+| BR-09 | Kept unchanged | 1:1 BOOKING↔APPROVAL, BOOKING↔USAGE_SESSION. |
+| BR-10 | **Extended** | Facility pattern normalized with surrogate facility-instance layer. |
+| BR-11 *(new)* | **Extended** | Advisory maintenance must be notified and acknowledged at booking time. |
+| BR-12 *(new)* | **Delegated** | `impact_level` decision authority is maintenance triage only; end-user reports cannot set blocking level. |
+| BR-13 *(new)* | **Delegated** | Auto-booking only when `auto_booking_enabled = 1` and all policy checks pass. |
+| BR-14 *(new)* | **Delegated** | Incident target integrity: `asset_id` requires matching `space_facility_id`. |
 
 ## 4. Concurrency Conflict Analysis
 
-### Conflict A — Double approval of overlapping bookings (instant + staff path)
-**Scenario:** Two users submit overlapping requests for the same popular space within a short interval.
-- **Sequence:**
-  1. Tx1 reads availability for space S (no conflicting approved booking) → no conflict.
-  2. Tx2 reads availability for space S (no conflicting approved booking) → no conflict.
-  3. Tx1 approves & inserts booking B1.
-  4. Tx2 approves & inserts booking B2 (overlaps B1).
-- **Break point:** both transactions performed the **check-then-act** (SELECT overlap → INSERT) between step 1–2 and step 3–4 with no serialization.
-- **Undesirable outcome:** two approved bookings B1 and B2 overlap → BR-01 violated; room double-scheduled.
-- **Invariant threatened:** BR-01 (also BR-11).
+### Conflict A — Instant-booking vs. instant-booking (double-booking)
 
-### Conflict B — Concurrent escalation of maintenance vs. in-flight booking approval
-**Scenario:** A booking request is being validated while a manager concurrently escalates an advisory maintenance record to `out-of-service`.
-- **Sequence:**
-  1. Tx1 validates booking B against `MAINTENANCE_RECORD` (reads only advisory records) → passes.
-  2. Tx2 escalates record R from `advisory` to `out-of-service` covering B's window.
-  3. Tx1 commits approved booking B.
-- **Break point:** validation and escalation are not isolated; the approved booking now violates the new blocking state.
-- **Undesirable outcome:** an approved booking overlaps an `out-of-service` maintenance window; BR-11 violated.
-- **Invariant threatened:** BR-11, BR-13.
+1. T1 and T2 both read `bookings` for space S at the same window; no approved overlap found.
+2. T1 inserts booking B1 → Approved. T2 inserts booking B2 → Approved.
+3. Both approved records overlap on S.
+- **Outcome if uncontrolled:** two approved bookings for the same space/time — violates BR-01.
+- **Threatened invariant:** no overlapping approved bookings per space.
 
-### Conflict C — Duplicate incident reports consolidated concurrently
-**Scenario:** Multiple students report the same broken projector at nearly the same time; two staff members each consolidate different subsets into different maintenance records.
-- **Sequence:**
-  1. Staff1 inserts `MAINTENANCE_RECORD` M1 and links incident reports R1, R2.
-  2. Staff2 concurrently inserts `MAINTENANCE_RECORD` M2 and links incident reports R2, R3.
-  3. R2 now maps to both M1 and M2 → duplicate/ambiguous maintenance; double work; inconsistent `impact_level` authority.
-- **Break point:** consolidation link table is appended without a uniqueness/consolidation guard; two actors race on the same incident row set.
-- **Undesirable outcome:** one incident contributes to two maintenance records; duplicate repair work; mixed impact levels.
-- **Invariant threatened:** BR-15 (single authority) and the consolidation mapping must be 1-to-many (many incidents → one record), not many-to-many with overlap.
+### Conflict B — Instant-booking vs. staff approval
 
-### Conflict D — Advisory acknowledgement lost during concurrent booking
-**Scenario:** Two requesters book overlapping slots on a space with an active advisory; the acknowledgement is recorded per booking.
-- **Sequence:** both transactions read the active advisory list and both insert bookings; acknowledgements are per-booking so no overlap violation — but if the advisory list read happens at a different isolation level, one requester may be notified of a stale/partial advisory set.
-- **Undesirable outcome:** missed advisory notification → BR-12 partially violated.
-- **Invariant threatened:** BR-12.
+1. Staff opens approval transaction for pending booking B1 and checks availability.
+2. Concurrently, instant-booking transaction inserts B2 in the overlapping window and commits.
+3. Staff then approves B1 based on stale availability read.
+- **Outcome if uncontrolled:** B1 and B2 overlap — BR-01 violation.
+- **Threatened invariant:** no overlapping approved bookings regardless of approval path.
 
----
+### Conflict C — Duplicate incident reports + manager consolidation
+
+1. Two users report the same broken projector within seconds → two `INCIDENT_REPORT` rows (expected: many reports → one maintenance).
+2. Manager triages and creates `MAINTENANCE_RECORD` M; meanwhile a second consolidation transaction also creates maintenance record M' for the same reports.
+3. **Outcome if uncontrolled:** duplicate maintenance records, reports consolidated twice, duplicated staff effort and inconsistent impact decisions.
+4. **Threatened invariant:** one consolidated maintenance record per issue; `impact_level` decided exactly once by triage.
+
+### Conflict D — Escalation vs. concurrent approval
+
+1. A booking is in-flight (Pending) while a maintenance record escalates to `out-of-service` overlapping its window.
+2. Approval reads maintenance before escalation commits; approves booking after escalation.
+3. **Outcome if uncontrolled:** approved booking overlaps out-of-service window; affected-booking report misses it.
+- **Threatened invariant:** no approved booking overlaps an out-of-service maintenance window (BR-02 refined).
+
+### Conflict E — Concurrent auto-approval on the same space
+
+1. Two requests for the same space/window both satisfy policy and both target an auto-booking space.
+2. Both stored procedure calls pass the availability check before either writes.
+- **Outcome if uncontrolled:** two auto-approved overlapping bookings.
+- **Threatened invariant:** BR-01 + BR-13.
 
 ## 5. Assumptions & Open Questions
 
-### Assumptions
-- `MAINTENANCE_RECORD.impact_level` values are exactly `out-of-service` and `advisory` (per requirement wording). A `CHECK` constraint enforces this domain.
-- Escalation/downgrade is implemented as an `UPDATE` of `impact_level`; no separate audit-history table for level changes is required by the requirement (a `maintenance_history` is not requested).
-- `INCIDENT_REPORT` consolidation is implemented as an M:N mapping table that is **advisory-only for booking** (never read by booking checks), and consolidated to one primary `MAINTENANCE_RECORD`; a `merged_into_maintenance_id` nullable column on the mapping avoids duplicate consolidation races.
-- `SPACE.AutoBookingEnabled = 0` is the safe default for all new and existing spaces; only specific space types are flipped to `1`.
-- "Semester" is parameterised in the reporting queries (e.g., `@SemesterStart`, `@SemesterEnd`).
-- Auto-approval policy check reuses the `SPACE.usage_policy` free-text plus structural checks (capacity vs. expected participants); detailed policy parsing is deferred to application logic.
+| ID | Type | Item |
+| :--- | :--- | :--- |
+| AS-01 | Assumption | `auto_booking_enabled` defaults to `0` (safe — opt-in) for all existing and new spaces. |
+| AS-02 | Assumption | Advisory acknowledgement is stored via a dedicated `advisory_acknowledgements` table plus snapshot fields on `bookings`. |
+| AS-03 | Assumption | A single `INCIDENT_REPORT` may be left unconsolidated (status `Open`); blocking logic ignores it entirely. |
+| AS-04 | Assumption | Maintenance `status` keeps Phase 1 free-text progression; `impact_level` is a separate triage attribute. |
+| AS-05 | Assumption | Incident report target defaults to room-level (`space_facility_id`/`asset_id` NULL) when nothing specific is chosen. |
+| OQ-01 | Open question | Should an advisory maintenance record with a future `start_time` still block? (Assumed: only overlapping `out-of-service` blocks, per requirement wording.) |
+| OQ-02 | Open question | Which space types are eligible for auto-booking? (Assumed: configurable via `auto_booking_enabled` per space, not by type.) |
+| OQ-03 | Open question | Who exactly may escalate `impact_level`? (Assumed: Facility Staff/Manager triage, recorded via `assigned_staff_id` context.) |
+| OQ-04 | Open question | Should rejected/cancelled bookings ever carry advisory acknowledgements? (Assumed: only approved bookings get acknowledgement rows.) |
 
-### Open Questions
-| ID | Question |
+## 6. Traceability to Phase 2 Workflow
+
+| Pipeline Step | Uses This Analysis |
 | :--- | :--- |
-| OQ-P2-01 | Should `impact_level` changes be audited with timestamps (escalation history), or is an overwrite sufficient? |
-| OQ-P2-02 | Which `space_type` values are eligible for auto-booking (`AutoBookingEnabled = 1`)? |
-| OQ-P2-03 | When an advisory is acknowledged, must the acknowledgement be immutable even if the advisory is later escalated/downgraded? |
-| OQ-P2-04 | Is there a grace period before an escalated `out-of-service` record blocks overlapping approvals (to let staff cancel affected bookings)? |
-| OQ-P2-05 | Should duplicate incident reports be automatically merged by the system, or only by explicit staff action? |
-| OQ-P2-06 | What is the exact definition of a "semester" date range for the reporting queries? |
+| 09 Updated ERD & Logical Design | RC-01, RC-04, RC-06, RC-08 |
+| 10 Schema Migration | RC-01, RC-06, RC-08 (ALTER/ADD) |
+| 11-12 Concurrency Design & Implementation | RC-06, RC-07, Conflict A-E |
+| 13 Concurrency Tests | Conflict A-E |
+| 16 Analytical Queries | RC-03, RC-08 reporting needs |

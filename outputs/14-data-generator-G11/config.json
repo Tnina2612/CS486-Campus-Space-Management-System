@@ -1,9 +1,42 @@
 {
-  "seed": 11,
-  "users": 3000,
-  "spaces": 600,
-  "bookings": 100000,
-  "maintenance": 8000,
-  "incidents": 2000,
-  "batch_size": 5000
+  "seed": 42,
+  "semester_start": "2026-03-02",
+  "semester_end": "2026-06-30",
+  "users": {
+    "students": 4000,
+    "lecturers": 300,
+    "teaching_assistants": 250,
+    "facility_staff": 80,
+    "department_administrators": 40,
+    "facility_managers": 10
+  },
+  "spaces": 400,
+  "facility_instances_per_space": [2, 5],
+  "assets_per_trackable_facility": [1, 3],
+  "maintenance_records": 1200,
+  "maintenance_oos_ratio": 0.35,
+  "bookings": {
+    "committed_per_space_per_week": 4,
+    "transient_per_space_per_week": 2,
+    "duration_hours": [1, 4],
+    "committed_status_weights": {
+      "Approved": 0.45,
+      "Checked In": 0.20,
+      "Completed": 0.25,
+      "No-show": 0.10
+    },
+    "transient_status_weights": {
+      "Pending": 0.60,
+      "Rejected": 0.25,
+      "Cancelled": 0.15
+    }
+  },
+  "incident_reports": 3000,
+  "consolidation_reports_per_record": [1, 4],
+  "consolidated_incident_ratio": 0.65,
+  "incident_target_weights": {
+    "room": 0.40,
+    "facility": 0.35,
+    "asset": 0.25
+  }
 }

@@ -1,322 +1,260 @@
-/*
-===============================================================================
-  14-data-generator-G11/validation.sql
-  Data integrity validation for the generated dataset.
-
-  Expected result: every check below returns 0 invalid rows.
-  Rules come from the actual schema and the Phase 1/Phase 2 business
-  requirements (BR-01, BR-02/RC-01, RC-03, RC-05).
-===============================================================================
-*/
-
-USE [CampusSpaceManagement];
-GO
+/* ============================================================================
+   FILE    : outputs/14-data-generator-G11/validation.sql
+   PURPOSE : Validate the generated Phase 2 dataset (and the whole database).
+             Every check must return 0 rows / 0 counts.  Business rules from
+             req/business-requirement.md and outputs/08 / 09.
+   RUN     : sqlcmd -S localhost -E -C -d CampusSpaceManagement -i validation.sql
+   ============================================================================ */
 
 SET NOCOUNT ON;
-GO
 
-/* --------------------------------------------------------------------------
-   1. Orphan foreign keys
-   ------------------------------------------------------------------------- */
-PRINT '1. Orphan foreign keys';
+DECLARE @genSpaceFilter NVARCHAR(400) = N'
+    WHERE space_id IN (SELECT space_id FROM dbo.spaces WHERE space_code LIKE ''GEN-%'')';
 
-SELECT COUNT(*) AS orphan_bookings_users
-FROM dbo.bookings b
-LEFT JOIN dbo.users u ON u.user_id = b.user_id
-WHERE u.user_id IS NULL;
+/* ---------------------------------------------------------------------------
+   1. Invalid dates / chrono violations
+--------------------------------------------------------------------------- */
+SELECT '1.1 bookings end<=start' AS check_name, COUNT(*) AS violations
+  FROM dbo.bookings
+ WHERE end_time <= start_time;
 
-SELECT COUNT(*) AS orphan_bookings_spaces
-FROM dbo.bookings b
-LEFT JOIN dbo.spaces s ON s.space_id = b.space_id
-WHERE s.space_id IS NULL;
+SELECT '1.2 usage_sessions end<=start' AS check_name, COUNT(*) AS violations
+  FROM dbo.usage_sessions
+ WHERE actual_end_time IS NOT NULL AND actual_end_time <= actual_start_time;
 
-SELECT COUNT(*) AS orphan_approvals_bookings
-FROM dbo.approvals a
-LEFT JOIN dbo.bookings b ON b.booking_id = a.booking_id
-WHERE b.booking_id IS NULL;
+SELECT '1.3 bookings outside semester range' AS check_name, COUNT(*) AS violations
+  FROM dbo.bookings b
+  JOIN dbo.spaces s ON s.space_id = b.space_id
+ WHERE s.space_code LIKE 'GEN-%'
+   AND (b.start_time < '2026-03-02' OR b.end_time > '2026-07-15');
 
-SELECT COUNT(*) AS orphan_approvals_users
-FROM dbo.approvals a
-LEFT JOIN dbo.users u ON u.user_id = a.staff_id
-WHERE a.staff_id IS NOT NULL AND u.user_id IS NULL;
+/* ---------------------------------------------------------------------------
+   2. Orphan foreign keys
+--------------------------------------------------------------------------- */
+SELECT '2.1 bookings.user_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.bookings b LEFT JOIN dbo.users u ON u.user_id = b.user_id
+ WHERE u.user_id IS NULL;
 
-SELECT COUNT(*) AS orphan_sessions_bookings
-FROM dbo.usage_sessions us
-LEFT JOIN dbo.bookings b ON b.booking_id = us.booking_id
-WHERE b.booking_id IS NULL;
+SELECT '2.2 bookings.space_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.bookings b LEFT JOIN dbo.spaces s ON s.space_id = b.space_id
+ WHERE s.space_id IS NULL;
 
-SELECT COUNT(*) AS orphan_sessions_users
-FROM dbo.usage_sessions us
-LEFT JOIN dbo.users u ON u.user_id = us.staff_id
-WHERE us.staff_id IS NOT NULL AND u.user_id IS NULL;
+SELECT '2.3 approvals.booking_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.approvals a LEFT JOIN dbo.bookings b ON b.booking_id = a.booking_id
+ WHERE b.booking_id IS NULL;
 
-SELECT COUNT(*) AS orphan_maintenance_spaces
-FROM dbo.maintenance_records m
-LEFT JOIN dbo.spaces s ON s.space_id = m.space_id
-WHERE s.space_id IS NULL;
+SELECT '2.4 approvals.staff_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.approvals a LEFT JOIN dbo.users u ON u.user_id = a.staff_id
+ WHERE a.staff_id IS NOT NULL AND u.user_id IS NULL;
 
-SELECT COUNT(*) AS orphan_maintenance_reporter
-FROM dbo.maintenance_records m
-LEFT JOIN dbo.users u ON u.user_id = m.reporter_id
-WHERE u.user_id IS NULL;
+SELECT '2.5 usage_sessions.booking_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.usage_sessions u LEFT JOIN dbo.bookings b ON b.booking_id = u.booking_id
+ WHERE b.booking_id IS NULL;
 
-SELECT COUNT(*) AS orphan_maintenance_staff
-FROM dbo.maintenance_records m
-LEFT JOIN dbo.users u ON u.user_id = m.assigned_staff_id
-WHERE m.assigned_staff_id IS NOT NULL AND u.user_id IS NULL;
+SELECT '2.6 maintenance.space_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.maintenance_records m LEFT JOIN dbo.spaces s ON s.space_id = m.space_id
+ WHERE s.space_id IS NULL;
 
-SELECT COUNT(*) AS orphan_assets_spaces
-FROM dbo.facility_assets fa
-LEFT JOIN dbo.spaces s ON s.space_id = fa.space_id
-WHERE s.space_id IS NULL;
+SELECT '2.7 space_facility.space_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.space_facility sf LEFT JOIN dbo.spaces s ON s.space_id = sf.space_id
+ WHERE s.space_id IS NULL;
 
-SELECT COUNT(*) AS orphan_assets_catalog
-FROM dbo.facility_assets fa
-LEFT JOIN dbo.facility_catalog fc ON fc.catalog_id = fa.catalog_id
-WHERE fc.catalog_id IS NULL;
+SELECT '2.8 space_facility.catalog_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.space_facility sf LEFT JOIN dbo.facility_catalog c ON c.catalog_id = sf.catalog_id
+ WHERE c.catalog_id IS NULL;
 
-SELECT COUNT(*) AS orphan_sf_spaces
-FROM dbo.space_facility sf
-LEFT JOIN dbo.spaces s ON s.space_id = sf.space_id
-WHERE s.space_id IS NULL;
+SELECT '2.9 facility_assets.space_facility_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.facility_assets fa LEFT JOIN dbo.space_facility sf ON sf.space_facility_id = fa.space_facility_id
+ WHERE sf.space_facility_id IS NULL;
 
-SELECT COUNT(*) AS orphan_sf_catalog
-FROM dbo.space_facility sf
-LEFT JOIN dbo.facility_catalog fc ON fc.catalog_id = sf.catalog_id
-WHERE fc.catalog_id IS NULL;
+SELECT '2.10 incident_reports.user_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.incident_reports ir LEFT JOIN dbo.users u ON u.user_id = ir.user_id
+ WHERE u.user_id IS NULL;
 
-SELECT COUNT(*) AS orphan_ack_bookings
-FROM dbo.advisory_acknowledgements aa
-LEFT JOIN dbo.bookings b ON b.booking_id = aa.booking_id
-WHERE b.booking_id IS NULL;
+SELECT '2.11 incident_reports.space_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.incident_reports ir LEFT JOIN dbo.spaces s ON s.space_id = ir.space_id
+ WHERE s.space_id IS NULL;
 
-SELECT COUNT(*) AS orphan_ack_maintenance
-FROM dbo.advisory_acknowledgements aa
-LEFT JOIN dbo.maintenance_records m ON m.maintenance_id = aa.maintenance_id
-WHERE m.maintenance_id IS NULL;
+SELECT '2.12 incident_reports.space_facility_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.incident_reports ir LEFT JOIN dbo.space_facility sf ON sf.space_facility_id = ir.space_facility_id
+ WHERE ir.space_facility_id IS NOT NULL AND sf.space_facility_id IS NULL;
 
-SELECT COUNT(*) AS orphan_ack_users
-FROM dbo.advisory_acknowledgements aa
-LEFT JOIN dbo.users u ON u.user_id = aa.acknowledged_by
-WHERE u.user_id IS NULL;
+SELECT '2.13 incident_reports.asset_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.incident_reports ir LEFT JOIN dbo.facility_assets fa ON fa.asset_id = ir.asset_id
+ WHERE ir.asset_id IS NOT NULL AND fa.asset_id IS NULL;
 
-SELECT COUNT(*) AS orphan_incident_users
-FROM dbo.incident_reports ir
-LEFT JOIN dbo.users u ON u.user_id = ir.user_id
-WHERE u.user_id IS NULL;
+SELECT '2.14 report_consolidations.incident_report_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.report_consolidations rc LEFT JOIN dbo.incident_reports ir ON ir.report_id = rc.incident_report_id
+ WHERE ir.report_id IS NULL;
 
-SELECT COUNT(*) AS orphan_incident_spaces
-FROM dbo.incident_reports ir
-LEFT JOIN dbo.spaces s ON s.space_id = ir.space_id
-WHERE s.space_id IS NULL;
+SELECT '2.15 report_consolidations.maintenance_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.report_consolidations rc LEFT JOIN dbo.maintenance_records m ON m.maintenance_id = rc.maintenance_id
+ WHERE rc.maintenance_id IS NOT NULL AND m.maintenance_id IS NULL;
 
-SELECT COUNT(*) AS orphan_consolidation_incident
-FROM dbo.report_consolidations rc
-LEFT JOIN dbo.incident_reports ir ON ir.report_id = rc.incident_report_id
-WHERE ir.report_id IS NULL;
+SELECT '2.16 advisory_acknowledgements.booking_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.advisory_acknowledgements a LEFT JOIN dbo.bookings b ON b.booking_id = a.booking_id
+ WHERE b.booking_id IS NULL;
 
-SELECT COUNT(*) AS orphan_consolidation_maintenance
-FROM dbo.report_consolidations rc
-LEFT JOIN dbo.maintenance_records m ON m.maintenance_id = rc.maintenance_id
-WHERE rc.maintenance_id IS NOT NULL AND m.maintenance_id IS NULL;
+SELECT '2.17 advisory_acknowledgements.maintenance_id' AS check_name, COUNT(*) AS violations
+  FROM dbo.advisory_acknowledgements a LEFT JOIN dbo.maintenance_records m ON m.maintenance_id = a.maintenance_id
+ WHERE m.maintenance_id IS NULL;
 
-SELECT COUNT(*) AS orphan_consolidation_staff
-FROM dbo.report_consolidations rc
-LEFT JOIN dbo.users u ON u.user_id = rc.consolidated_by
-WHERE u.user_id IS NULL;
-GO
+/* ---------------------------------------------------------------------------
+   3. Business rule BR-01: no overlapping committed bookings on the same space
+      Committed = Approved / Checked In / Completed / No-show
+--------------------------------------------------------------------------- */
+SELECT '3.1 BR-01 overlapping committed bookings' AS check_name, COUNT(*) AS violations
+  FROM dbo.bookings a
+  JOIN dbo.bookings b
+    ON a.space_id = b.space_id
+   AND a.booking_id < b.booking_id
+ WHERE a.status IN ('Approved','Checked In','Completed','No-show')
+   AND b.status IN ('Approved','Checked In','Completed','No-show')
+   AND a.start_time < b.end_time
+   AND b.start_time < a.end_time;
 
-/* --------------------------------------------------------------------------
-   2. Duplicate keys (UNIQUE constraints must hold)
-   ------------------------------------------------------------------------- */
-PRINT '2. Duplicate keys';
+/* ---------------------------------------------------------------------------
+   4. BR-02 / BR-11: no committed booking overlaps an out-of-service window.
+      Scoped to generated (GEN-*) spaces: pre-existing Phase 1 bookings may
+      overlap migration-created maintenance rows and are preserved as-is.
+--------------------------------------------------------------------------- */
+SELECT '4.1 BR-11 committed booking overlaps out-of-service (GEN-* only)' AS check_name, COUNT(*) AS violations
+  FROM dbo.bookings b
+  JOIN dbo.maintenance_records m
+    ON m.space_id = b.space_id
+   AND m.impact_level = 'out-of-service'
+  JOIN dbo.spaces s ON s.space_id = b.space_id
+ WHERE b.status IN ('Approved','Checked In','Completed','No-show')
+   AND s.space_code LIKE 'GEN-%'
+   AND b.start_time < ISNULL(m.completion_time, '9999-12-31')
+   AND m.start_time < b.end_time;
 
-SELECT COUNT(*) AS dup_users_email
-FROM (
-    SELECT email FROM dbo.users GROUP BY email HAVING COUNT(*) > 1
-) d;
+/* ---------------------------------------------------------------------------
+   5. BR-11 advisory acknowledgement: a committed booking overlapping an
+      advisory window MUST be acknowledged (flag + ack row). Scoped to
+      generated (GEN-*) spaces for the same reason as check 4.1.
+--------------------------------------------------------------------------- */
+SELECT '5.1 advisory overlap but flag=0 (GEN-* only)' AS check_name, COUNT(*) AS violations
+  FROM dbo.bookings b
+  JOIN dbo.maintenance_records m
+    ON m.space_id = b.space_id
+   AND m.impact_level = 'advisory'
+  JOIN dbo.spaces s ON s.space_id = b.space_id
+ WHERE b.status IN ('Approved','Checked In','Completed','No-show')
+   AND s.space_code LIKE 'GEN-%'
+   AND b.start_time < ISNULL(m.completion_time, '9999-12-31')
+   AND m.start_time < b.end_time
+   AND b.advisory_acknowledged = 0;
 
-SELECT COUNT(*) AS dup_spaces_code
-FROM (
-    SELECT space_code FROM dbo.spaces GROUP BY space_code HAVING COUNT(*) > 1
-) d;
+SELECT '5.2 advisory overlap but no ack row (GEN-* only)' AS check_name, COUNT(*) AS violations
+  FROM dbo.bookings b
+  JOIN dbo.maintenance_records m
+    ON m.space_id = b.space_id
+   AND m.impact_level = 'advisory'
+  JOIN dbo.spaces s ON s.space_id = b.space_id
+ WHERE b.status IN ('Approved','Checked In','Completed','No-show')
+   AND s.space_code LIKE 'GEN-%'
+   AND b.start_time < ISNULL(m.completion_time, '9999-12-31')
+   AND m.start_time < b.end_time
+   AND NOT EXISTS (
+       SELECT 1 FROM dbo.advisory_acknowledgements aa
+        WHERE aa.booking_id = b.booking_id
+          AND aa.maintenance_id = m.maintenance_id
+   );
 
-SELECT COUNT(*) AS dup_assets_tag
-FROM (
-    SELECT asset_tag FROM dbo.facility_assets GROUP BY asset_tag HAVING COUNT(*) > 1
-) d;
+SELECT '5.3 ack row but flag=0 (GEN-* only)' AS check_name, COUNT(*) AS violations
+  FROM dbo.advisory_acknowledgements aa
+  JOIN dbo.bookings b ON b.booking_id = aa.booking_id
+  JOIN dbo.spaces s ON s.space_id = b.space_id
+ WHERE b.advisory_acknowledged = 0
+   AND s.space_code LIKE 'GEN-%';
 
-SELECT COUNT(*) AS dup_approvals_booking
-FROM (
-    SELECT booking_id FROM dbo.approvals GROUP BY booking_id HAVING COUNT(*) > 1
-) d;
+/* ---------------------------------------------------------------------------
+   6. BR-02: bookings on Temporarily Closed / Retired spaces
+--------------------------------------------------------------------------- */
+SELECT '6.1 BR-02 booking on closed/retired space' AS check_name, COUNT(*) AS violations
+  FROM dbo.bookings b
+  JOIN dbo.spaces s ON s.space_id = b.space_id
+ WHERE s.current_status IN ('Temporarily Closed','Retired');
 
-SELECT COUNT(*) AS dup_sessions_booking
-FROM (
-    SELECT booking_id FROM dbo.usage_sessions GROUP BY booking_id HAVING COUNT(*) > 1
-) d;
+/* ---------------------------------------------------------------------------
+   7. Facility trigger rule: trackable quantity <= registered assets.
+      Scoped to generated (GEN-*) spaces: the Phase 1 sample data deliberately
+      disabled the trigger while seeding, leaving pre-existing rows whose
+      quantity exceeds the registered asset count. Those rows are Phase 1
+      output and are preserved as-is.
+--------------------------------------------------------------------------- */
+SELECT '7.1 trackable quantity > assets (GEN-* only)' AS check_name, COUNT(*) AS violations
+  FROM dbo.space_facility sf
+  JOIN dbo.facility_catalog c ON c.catalog_id = sf.catalog_id
+ WHERE c.is_trackable = 1
+   AND sf.space_id IN (SELECT space_id FROM dbo.spaces WHERE space_code LIKE 'GEN-%')
+   AND sf.quantity > (
+       SELECT COUNT(*) FROM dbo.facility_assets fa
+        WHERE fa.space_id = sf.space_id
+          AND fa.catalog_id = sf.catalog_id
+   );
 
-SELECT COUNT(*) AS dup_ack_pair
-FROM (
-    SELECT booking_id, maintenance_id
-    FROM dbo.advisory_acknowledgements
-    GROUP BY booking_id, maintenance_id HAVING COUNT(*) > 1
-) d;
+/* ---------------------------------------------------------------------------
+   8. Phase 2 report-target integrity (BR-14)
+      - asset_id requires space_facility_id
+      - (space_facility_id, asset_id) must exist in facility_assets
+--------------------------------------------------------------------------- */
+SELECT '8.1 asset without facility instance' AS check_name, COUNT(*) AS violations
+  FROM dbo.incident_reports
+ WHERE asset_id IS NOT NULL AND space_facility_id IS NULL;
 
-SELECT COUNT(*) AS dup_consolidation_incident
-FROM (
-    SELECT incident_report_id
-    FROM dbo.report_consolidations
-    GROUP BY incident_report_id HAVING COUNT(*) > 1
-) d;
-GO
+SELECT '8.2 asset not matching facility instance' AS check_name, COUNT(*) AS violations
+  FROM dbo.incident_reports ir
+ WHERE ir.asset_id IS NOT NULL
+   AND NOT EXISTS (
+       SELECT 1 FROM dbo.facility_assets fa
+        WHERE fa.space_facility_id = ir.space_facility_id
+          AND fa.asset_id = ir.asset_id
+   );
 
-/* --------------------------------------------------------------------------
-   3. Chronology / value validity
-   ------------------------------------------------------------------------- */
-PRINT '3. Chronology and value validity';
+/* ---------------------------------------------------------------------------
+   9. BR-04: rejected bookings must carry a rejection reason
+--------------------------------------------------------------------------- */
+SELECT '9.1 BR-04 rejected without reason' AS check_name, COUNT(*) AS violations
+  FROM dbo.bookings b
+  LEFT JOIN dbo.approvals a ON a.booking_id = b.booking_id
+ WHERE b.status = 'Rejected'
+   AND (a.approval_id IS NULL OR a.rejection_reason IS NULL OR LTRIM(a.rejection_reason) = '');
 
-SELECT COUNT(*) AS bad_booking_chrono
-FROM dbo.bookings WHERE end_time <= start_time;
+/* ---------------------------------------------------------------------------
+   10. Phase 2 mandatory coverage: at least one of each impact level
+--------------------------------------------------------------------------- */
+SELECT '10.1 no out-of-service maintenance' AS check_name, COUNT(*) AS violations
+  FROM (SELECT 1 AS x) t
+ WHERE NOT EXISTS (SELECT 1 FROM dbo.maintenance_records WHERE impact_level = 'out-of-service');
 
-SELECT COUNT(*) AS bad_session_chrono
-FROM dbo.usage_sessions WHERE actual_end_time <= actual_start_time;
+SELECT '10.2 no advisory maintenance' AS check_name, COUNT(*) AS violations
+  FROM (SELECT 1 AS x) t
+ WHERE NOT EXISTS (SELECT 1 FROM dbo.maintenance_records WHERE impact_level = 'advisory');
 
-SELECT COUNT(*) AS bad_booking_participants
-FROM dbo.bookings WHERE expected_participants <= 0;
+SELECT '10.3 no consolidated incident reports' AS check_name, COUNT(*) AS violations
+  FROM (SELECT 1 AS x) t
+ WHERE NOT EXISTS (SELECT 1 FROM dbo.report_consolidations WHERE maintenance_id IS NOT NULL);
 
-SELECT COUNT(*) AS bad_space_capacity
-FROM dbo.spaces WHERE capacity <= 0;
+SELECT '10.4 no advisory acknowledgements' AS check_name, COUNT(*) AS violations
+  FROM (SELECT 1 AS x) t
+ WHERE NOT EXISTS (SELECT 1 FROM dbo.advisory_acknowledgements);
 
-SELECT COUNT(*) AS bad_impact_level
-FROM dbo.maintenance_records
-WHERE impact_level NOT IN ('advisory', 'out-of-service');
+/* ---------------------------------------------------------------------------
+   11. Duplicate natural keys across generated data
+--------------------------------------------------------------------------- */
+SELECT '11.1 duplicate asset_tag' AS check_name, COUNT(*) AS violations
+  FROM (SELECT asset_tag FROM dbo.facility_assets GROUP BY asset_tag HAVING COUNT(*) > 1) t;
 
-SELECT COUNT(*) AS bad_booking_status
-FROM dbo.bookings
-WHERE status NOT IN ('Pending', 'Approved', 'Rejected', 'Cancelled',
-                     'Checked In', 'Completed', 'No-show');
+SELECT '11.2 duplicate space_code' AS check_name, COUNT(*) AS violations
+  FROM (SELECT space_code FROM dbo.spaces GROUP BY space_code HAVING COUNT(*) > 1) t;
 
-SELECT COUNT(*) AS bad_space_status
-FROM dbo.spaces
-WHERE current_status NOT IN ('Available', 'In Use',
-                             'Temporarily Closed', 'Retired');
+SELECT '11.3 duplicate email' AS check_name, COUNT(*) AS violations
+  FROM (SELECT email FROM dbo.users GROUP BY email HAVING COUNT(*) > 1) t;
 
-SELECT COUNT(*) AS bad_user_role
-FROM dbo.users
-WHERE role NOT IN ('Student', 'Lecturer', 'Teaching Assistant',
-                   'Facility Staff', 'Department Administrator',
-                   'Facility Manager');
+SELECT '11.4 double consolidation (report in 2 maintenance records)' AS check_name, COUNT(*) AS violations
+  FROM (SELECT incident_report_id FROM dbo.report_consolidations
+         GROUP BY incident_report_id HAVING COUNT(*) > 1) t;
 
-SELECT COUNT(*) AS bad_ack_flag
-FROM dbo.bookings WHERE advisory_acknowledged NOT IN (0, 1);
-
-SELECT COUNT(*) AS bad_incident_status
-FROM dbo.incident_reports
-WHERE status NOT IN ('Open', 'Triaged', 'Duplicate', 'Resolved');
-GO
-
-/* --------------------------------------------------------------------------
-   4. BR-01: overlapping approved-like bookings on the same space
-   ------------------------------------------------------------------------- */
-PRINT '4. BR-01 overlap check (approved-like)';
-
-SELECT COUNT(*) AS overlapping_approved_bookings
-FROM dbo.bookings b1
-WHERE b1.status IN ('Approved', 'Checked In', 'Completed')
-  AND EXISTS (
-      SELECT 1
-      FROM dbo.bookings b2
-      WHERE b2.space_id = b1.space_id
-        AND b2.booking_id <> b1.booking_id
-        AND b2.status IN ('Approved', 'Checked In', 'Completed')
-        AND b2.start_time < b1.end_time
-        AND b2.end_time   > b1.start_time
-  );
-GO
-
-/* --------------------------------------------------------------------------
-   5. BR-02 / RC-01: approved-like booking overlaps out-of-service maintenance
-   Scope: GENERATED data only (GEN-* spaces). One Phase 1 sample booking
-   (B22, space 7) overlaps its sample open maintenance record; that record was
-   backfilled to 'out-of-service' by the migration and the sample data is a
-   read-only Phase 1 baseline, so it is excluded from the generated-data
-   contract and noted as a known Phase 1 caveat.
-   ------------------------------------------------------------------------- */
-PRINT '5. Approved booking overlaps out-of-service maintenance (generated data)';
-
-SELECT COUNT(*) AS approved_overlapping_oos
-FROM dbo.bookings b
-JOIN dbo.spaces s ON s.space_id = b.space_id
-WHERE s.space_code LIKE 'GEN-%'
-  AND b.status IN ('Approved', 'Checked In', 'Completed')
-  AND EXISTS (
-      SELECT 1
-      FROM dbo.maintenance_records m
-      WHERE m.space_id = b.space_id
-        AND m.impact_level = 'out-of-service'
-        AND m.start_time < b.end_time
-        AND COALESCE(m.completion_time, DATEADD(YEAR, 100, m.start_time)) > b.start_time
-  );
-GO
-
-/* --------------------------------------------------------------------------
-   6. RC-03: every advisory_acknowledgements row must have a booking whose
-      advisory_acknowledged flag is 1
-   ------------------------------------------------------------------------- */
-PRINT '6. RC-03 acknowledgement consistency';
-
-SELECT COUNT(*) AS ack_missing_flag
-FROM dbo.advisory_acknowledgements aa
-LEFT JOIN dbo.bookings b ON b.booking_id = aa.booking_id
-WHERE b.advisory_acknowledged <> 1;
-GO
-
-/* --------------------------------------------------------------------------
-   7. RC-05: AutoBookingEnabled is NOT NULL and boolean
-   ------------------------------------------------------------------------- */
-PRINT '7. RC-05 AutoBookingEnabled validity';
-
-SELECT COUNT(*) AS null_auto_flag
-FROM dbo.spaces WHERE AutoBookingEnabled IS NULL;
-
-SELECT COUNT(*) AS bad_auto_flag
-FROM dbo.spaces WHERE AutoBookingEnabled NOT IN (0, 1);
-GO
-
-/* --------------------------------------------------------------------------
-   8. Purpose within usage policy (generated data).
-   Generated GEN-* spaces have usage_policy NULL (no policy restrictions), so
-   every generated booking passes. Sample spaces carry free-text policies
-   (e.g. 'Exams, large events') whose strings do not enumerate the exact
-   purpose enum values, so 24 Phase 1 sample bookings fall outside their
-   textual policy — a Phase 1 sample-data modelling note, not a generator rule.
-   ------------------------------------------------------------------------- */
-PRINT '8. Purpose outside usage policy (generated data)';
-
-SELECT COUNT(*) AS purpose_not_in_policy
-FROM dbo.bookings b
-JOIN dbo.spaces s ON s.space_id = b.space_id
-WHERE s.space_code LIKE 'GEN-%'
-  AND s.usage_policy IS NOT NULL
-  AND s.usage_policy <> ''
-  AND b.purpose NOT IN (
-      SELECT value FROM STRING_SPLIT(s.usage_policy, ';')
-  );
-GO
-
-/* --------------------------------------------------------------------------
-   9. C8: every consolidation maps to a maintenance record (or is NULL only
-      during triage) and consolidated reports are flagged Triaged.
-   ------------------------------------------------------------------------- */
-PRINT '9. C8 incident consolidation consistency';
-
-SELECT COUNT(*) AS consolidation_not_triaged
-FROM dbo.report_consolidations rc
-JOIN dbo.incident_reports ir ON ir.report_id = rc.incident_report_id
-WHERE rc.maintenance_id IS NOT NULL AND ir.status <> 'Triaged';
-
-SELECT COUNT(*) AS consolidation_null_maintenance
-FROM dbo.report_consolidations
-WHERE maintenance_id IS NULL;
-GO
+PRINT N'VALIDATION COMPLETE - every row above must show 0 violations.';

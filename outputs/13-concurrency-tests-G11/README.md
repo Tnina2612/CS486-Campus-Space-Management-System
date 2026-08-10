@@ -2,18 +2,22 @@
 
 Proves that the Campus Space Management System **cannot double-book** a space,
 even when two users/staff operate simultaneously, and that the Phase 2
-maintenance and incident rules behave correctly under concurrency.
+maintenance, incident, and escalation rules behave correctly under concurrency.
 
 ## What is tested
 
-`test_concurrency.py` runs four scenarios:
+`test_concurrency.py` runs eight scenarios:
 
 | # | Scenario | Files used | Invariant |
 | :--- | :--- | :--- | :--- |
 | 1 | Concurrent instant-booking vs staff approval on overlapping windows | `tx1_instant_booking.sql`, `tx2_staff_approval.sql` | exactly **one** approved booking survives (BR-01) |
+| 1b | Two concurrent instant bookings on overlapping windows | `tx1_instant_booking.sql`, `tx2_instant_booking.sql` | exactly **one** approved booking survives (BR-01, same flow) |
 | 2 | Advisory maintenance overlaps the requested window | `tx3_advisory_booking.sql` | booking is **auto-approved**; advisory does not block (BR-12); acknowledgement row recorded; `APPROVAL.staff_id = NULL` |
 | 3 | Out-of-service maintenance overlaps the requested window | `tx4_oos_booking.sql` | booking is **blocked** with `OUT_OF_SERVICE`; no booking row written (BR-11) |
-| 4 | Duplicate `INCIDENT_REPORT` submissions are consolidated | (inline) `sp_consolidate_incident_reports` | many reports -> **one** `MAINTENANCE_RECORD`; re-triage rejected (`ALREADY_CONSOLIDATED`) |
+| 4 | Duplicate `INCIDENT_REPORT` submissions are consolidated concurrently | (inline) `sp_consolidate_incident_reports` | many reports -> **one** `MAINTENANCE_RECORD`; second triage returns `ALREADY_CONSOLIDATED` |
+| 5 | Two staff members approve two *different* overlapping pending bookings | `tx2_staff_approval.sql`, `tx5_staff_approval_b.sql` | exactly **one** approval survives (T3) |
+| 6 | Two staff members approve the *same* pending booking | `tx6_double_approve.sql` (x2 threads) | exactly **one** `dbo.approvals` row exists (double-approve guard) |
+| 7 | Escalation `advisory` -> `out-of-service` races a staff approval | `tx7_escalate_impact.sql`, `tx2_staff_approval.sql` | escalation always commits to `out-of-service`; if it commits first the approval is rejected, otherwise the booking is surfaced as an affected booking (T4) |
 
 ### Race windows (Scenario 1)
 
@@ -28,9 +32,9 @@ Two concurrent transactions target the same space `TEST-ROOM-A` on
 The windows overlap (10:00–11:00). The pessimistic locking guard
 (`WITH (UPDLOCK, HOLDLOCK)` in the stored procedures, outputs/
 `12-concurrency-implementation-G11.sql`) makes exactly one of the two succeed.
-The loser returns `@result_status = 'OVERLAP'` and rolls back; the runner
-classifies the outcome from the returned status (each SQL file ends with a
-`SELECT <status> AS result_status;` result set).
+The loser is caught by its `TRY...CATCH` and mapped to `OVERLAP`; the runner
+classifies the outcome from the trailing `result_status` column of each SQL
+file.
 
 ## Prerequisites
 
@@ -69,7 +73,8 @@ python outputs/13-concurrency-tests-G11/test_concurrency.py 5
 ```
 
 `test_concurrency.py` accepts the number of race rounds as an argument
-(default 5). Scenarios 2–4 run once each.
+(default 5). Scenarios 2–7 run once each; scenarios 1 and 1b run `rounds`
+times.
 
 ## Environment variables
 
@@ -86,53 +91,55 @@ python outputs/13-concurrency-tests-G11/test_concurrency.py 5
 ## How the script works
 
 1. **Setup** — each scenario inserts its own test users, spaces, and rows.
-   `TEST-ROOM-A` has `AutoBookingEnabled = 1` (RC-05) and a usage policy
-   permitting `Seminar`. Generated ids are captured with `OUTPUT INSERTED` in
-   the same batch as the `INSERT` (using `SCOPE_IDENTITY()` in a separate
-   pyodbc batch is unreliable).
+   `TEST-*` spaces use `auto_booking_enabled = 1` (except where the scenario
+   needs it off). Generated ids are captured with `OUTPUT INSERTED`.
 2. **Race** — spawns two threads with independent connections, synchronized on
    a barrier so both procedure calls start together.
 3. **Capture** — each SQL file ends with
-   `SELECT ISNULL(@rs, N'NO_STATUS') AS result_status;`. The runner compares the
-   returned status against the expected success status (`AUTO_APPROVED` for
-   tx1, `APPROVED` for tx2): a match is logged as `COMMIT`, anything else as
-   `REJECTED`. Any ODBC error also counts as `REJECTED`.
-4. **Assert** — Scenario 1 counts approved bookings on the space for the day;
-   **exactly 1** must remain. Scenario 2 checks the acknowledgement row exists
-   and `staff_id IS NULL`. Scenario 3 checks zero bookings are written.
-   Scenario 4 checks one distinct `MAINTENANCE_RECORD` and that a duplicate
-   triage is rejected.
+   `SELECT ISNULL(@rs, N'NO_STATUS') AS result_status;`. The runner scans all
+   result sets for the `result_status` column (the procedures also emit
+   informational SELECTs) and compares against the expected success status
+   (`AUTO_APPROVED`/`APPROVED`/`ESCALATED`): a match is logged as `COMMIT`,
+   anything else as `REJECTED`. Any ODBC error also counts as `REJECTED`.
+4. **Assert** — each scenario verifies its invariant with a fresh connection:
+   exactly one approved booking, zero bookings on a blocked space, exactly one
+   `MAINTENANCE_RECORD`, exactly one approval row, etc.
 5. **Teardown** — removes all test rows so scenarios/rounds are independent.
 
-## Expected output
+## Expected output (abridged)
 
 ```
-============================================================
 SCENARIO 1: concurrent instant-booking vs staff approval (BR-01)
-============================================================
 --- Round 1 ---
-  tx1_auto    : COMMIT -> AUTO_APPROVED
+  tx1_auto    : COMMIT   -> AUTO_APPROVED
   tx2_approval: REJECTED -> status=OVERLAP
   Approved bookings after race: 1 (must be exactly 1) -> PASS
 ...
-============================================================
 SCENARIO 2: advisory maintenance does not block booking (BR-12)
-============================================================
   tx3 booking   : AUTO_APPROVED -> AUTO_APPROVED
   acknowledgement rows recorded: 1 (must be >= 1) -> PASS
   approvals with staff_id NULL (auto actor): 1 (must be 1) -> PASS
-============================================================
 SCENARIO 3: out-of-service maintenance blocks booking (BR-11)
-============================================================
   tx4 booking   : BLOCKED -> status=OUT_OF_SERVICE
   bookings written on blocked space: 0 (must be 0) -> PASS
-============================================================
 SCENARIO 4: duplicate incident reports consolidate into one record (C8)
-============================================================
-  first consolidation : CONSOLIDATED
-  duplicate attempt   : ALREADY_CONSOLIDATED
+  thread A result: CONSOLIDATED
+  thread B result: ALREADY_CONSOLIDATED
   distinct maintenance records for the reports: 1 (must be 1)
+SCENARIO 5: staff vs staff approval of overlapping bookings (T3)
+  staff A (booking X): COMMIT   -> APPROVED
+  staff B (booking Y): REJECTED -> status=OVERLAP
+  Approved bookings after race: 1 (must be exactly 1) -> PASS
+SCENARIO 6: double-approve the same booking (one approval row)
+  thread A (staff C): COMMIT   -> APPROVED
+  thread B (staff D): REJECTED -> status=NOT_PENDING
+  approval rows for booking X: 1 (must be 1) -> PASS
+SCENARIO 7: escalation vs approval race (T4)
+  escalation (advisory->out-of-service): COMMIT -> ESCALATED
+  approval of pending booking           : REJECTED -> status=OVERLAP
+  maintenance impact_level now          : out-of-service
+  booking status                        : Pending
 ```
 
 (Which transaction wins the race may vary between rounds; the invariant is
-that exactly one does, and the loser is rejected with `status=OVERLAP`.)
+that exactly one does and the loser is safely rejected.)

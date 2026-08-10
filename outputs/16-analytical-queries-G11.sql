@@ -34,10 +34,11 @@
     IX_bookings_status_time          (status, start_time, end_time)   INCLUDE (space_id)
     IX_maintenance_records_space_time (space_id, start_time, completion_time)
                                      INCLUDE (impact_level, status)
-    IX_spaces_capacity_status        (capacity) INCLUDE (current_status, space_type, space_name)
+    IX_spaces_capacity_status        (capacity, current_status) INCLUDE (space_type, space_name)
 
-  Semester used for the examples below (matches the data generator):
-    SEMESTER_START = 2026-01-05 08:00   SEMESTER_END = 2026-04-30 18:00
+   Semester used for the examples below (matches the data generator
+   config.json):
+    SEMESTER_START = 2026-03-02 08:00   SEMESTER_END = 2026-06-30 18:00
 ===============================================================================
 */
 
@@ -74,7 +75,7 @@ GO
 
    TEST EXECUTION EXAMPLE
      EXEC the batch below unchanged: it uses the seed semester
-     2026-01-05 08:00 .. 2026-04-30 18:00 against the generated dataset.
+     2026-03-02 08:00 .. 2026-06-30 18:00 against the generated dataset.
      To run for another semester, change only @SemStart / @SemEnd.
 
    EXPECTED-RESULT EXPLANATION
@@ -83,8 +84,8 @@ GO
      shows 0 / 0.0. Spaces are ordered by total approved hours descending so
      the most-used spaces appear first.
 */
-DECLARE @SemStart DATETIME2 = '2026-01-05T08:00:00';
-DECLARE @SemEnd   DATETIME2 = '2026-04-30T18:00:00';
+DECLARE @SemStart DATETIME2 = '2026-03-02T08:00:00';
+DECLARE @SemEnd   DATETIME2 = '2026-06-30T18:00:00';
 
 SELECT s.space_id,
        s.space_code,
@@ -132,7 +133,7 @@ GO
 
    TEST EXECUTION EXAMPLE
      Run the batch below unchanged against the generated dataset
-     (semester 2026-01-05 08:00 .. 2026-04-30 18:00).
+     (semester 2026-03-02 08:00 .. 2026-06-30 18:00).
 
    EXPECTED-RESULT EXPLANATION
      One row per distinct (weekday, hour). The result is ordered Monday→Sunday
@@ -140,8 +141,8 @@ GO
      busiest demand slots are immediately readable. `approved_booking_count`
      is the number of approved-like bookings starting in that slot.
 */
-DECLARE @SemStart DATETIME2 = '2026-01-05T08:00:00';
-DECLARE @SemEnd   DATETIME2 = '2026-04-30T18:00:00';
+DECLARE @SemStart DATETIME2 = '2026-03-02T08:00:00';
+DECLARE @SemEnd   DATETIME2 = '2026-06-30T18:00:00';
 
 WITH approved AS (
     SELECT b.start_time,
@@ -313,8 +314,8 @@ GO
        maintenance period, not by the booking status history.
 
    TEST EXECUTION EXAMPLE
-     The batch below picks the lowest maintenance_id with impact_level
-     'out-of-service' (guaranteed to exist in the generated dataset) and lists
+     The batch below picks an out-of-service maintenance record that overlaps
+     at least one approved-like booking (so the example returns rows) and lists
      its affected bookings. Replace the variable with any concrete
      maintenance_id to test a specific record.
 
@@ -327,10 +328,18 @@ GO
      window at a boundary, is not returned.
 */
 DECLARE @MaintenanceID INT = (
-    SELECT TOP 1 maintenance_id
-    FROM dbo.maintenance_records
-    WHERE impact_level = 'out-of-service'
-    ORDER BY maintenance_id
+    SELECT TOP 1 m.maintenance_id
+    FROM dbo.maintenance_records AS m
+    WHERE m.impact_level = 'out-of-service'
+      AND EXISTS (
+          SELECT 1
+          FROM dbo.bookings AS b
+          WHERE b.space_id = m.space_id
+            AND b.status IN ('Approved', 'Checked In', 'Completed')
+            AND b.start_time < COALESCE(m.completion_time, DATEADD(YEAR, 100, m.start_time))
+            AND b.end_time   > m.start_time
+      )
+    ORDER BY m.maintenance_id
 );
 
 SELECT b.booking_id,
@@ -364,8 +373,8 @@ GO
 -- V1. Semester boundaries: booking at exactly @SemStart is included; a booking
 --     starting exactly at @SemEnd is excluded (half-open [start, end)).
 -- ----------------------------------------------------------------------------
-DECLARE @SemStart DATETIME2 = '2026-01-05T08:00:00';
-DECLARE @SemEnd   DATETIME2 = '2026-04-30T18:00:00';
+DECLARE @SemStart DATETIME2 = '2026-03-02T08:00:00';
+DECLARE @SemEnd   DATETIME2 = '2026-06-30T18:00:00';
 
 DECLARE @Bookings TABLE (
     booking_id INT PRIMARY KEY,
