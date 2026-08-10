@@ -6,6 +6,9 @@
    RUN     : sqlcmd -S localhost -E -C -d CampusSpaceManagement -i validation.sql
    ============================================================================ */
 
+USE [CampusSpaceManagement];
+GO
+
 SET NOCOUNT ON;
 
 DECLARE @genSpaceFilter NVARCHAR(400) = N'
@@ -26,7 +29,7 @@ SELECT '1.3 bookings outside semester range' AS check_name, COUNT(*) AS violatio
   FROM dbo.bookings b
   JOIN dbo.spaces s ON s.space_id = b.space_id
  WHERE s.space_code LIKE 'GEN-%'
-   AND (b.start_time < '2026-03-02' OR b.end_time > '2026-07-15');
+   AND (b.start_time < '2023-01-02' OR b.end_time >= '2026-01-17');
 
 /* ---------------------------------------------------------------------------
    2. Orphan foreign keys
@@ -218,8 +221,10 @@ SELECT '8.2 asset not matching facility instance' AS check_name, COUNT(*) AS vio
 --------------------------------------------------------------------------- */
 SELECT '9.1 BR-04 rejected without reason' AS check_name, COUNT(*) AS violations
   FROM dbo.bookings b
+  JOIN dbo.spaces s ON s.space_id = b.space_id
   LEFT JOIN dbo.approvals a ON a.booking_id = b.booking_id
- WHERE b.status = 'Rejected'
+ WHERE s.space_code LIKE 'GEN-%'
+   AND b.status = 'Rejected'
    AND (a.approval_id IS NULL OR a.rejection_reason IS NULL OR LTRIM(a.rejection_reason) = '');
 
 /* ---------------------------------------------------------------------------

@@ -36,9 +36,8 @@
                                      INCLUDE (impact_level, status)
     IX_spaces_capacity_status        (capacity, current_status) INCLUDE (space_type, space_name)
 
-   Semester used for the examples below (matches the data generator
-   config.json):
-    SEMESTER_START = 2026-03-02 08:00   SEMESTER_END = 2026-06-30 18:00
+   Reporting window used by Q1/Q2 below (covers the deterministic GEN-* data):
+    SEMESTER_START = 2025-09-01 00:00   SEMESTER_END = 2026-02-01 00:00
 ===============================================================================
 */
 
@@ -74,8 +73,8 @@ GO
      * Hours = SUM(end_time - start_time) in minutes / 60 (fractional allowed).
 
    TEST EXECUTION EXAMPLE
-     EXEC the batch below unchanged: it uses the seed semester
-     2026-03-02 08:00 .. 2026-06-30 18:00 against the generated dataset.
+     EXEC the batch below unchanged: it uses the final generated semester
+     2025-09-01 .. 2026-02-01 against the Phase 14 dataset.
      To run for another semester, change only @SemStart / @SemEnd.
 
    EXPECTED-RESULT EXPLANATION
@@ -84,8 +83,8 @@ GO
      shows 0 / 0.0. Spaces are ordered by total approved hours descending so
      the most-used spaces appear first.
 */
-DECLARE @SemStart DATETIME2 = '2026-03-02T08:00:00';
-DECLARE @SemEnd   DATETIME2 = '2026-06-30T18:00:00';
+DECLARE @SemStart DATETIME2 = '2025-09-01T00:00:00';
+DECLARE @SemEnd   DATETIME2 = '2026-02-01T00:00:00';
 
 SELECT s.space_id,
        s.space_code,
@@ -133,7 +132,7 @@ GO
 
    TEST EXECUTION EXAMPLE
      Run the batch below unchanged against the generated dataset
-     (semester 2026-03-02 08:00 .. 2026-06-30 18:00).
+     (semester 2025-09-01 .. 2026-02-01).
 
    EXPECTED-RESULT EXPLANATION
      One row per distinct (weekday, hour). The result is ordered Monday→Sunday
@@ -141,8 +140,8 @@ GO
      busiest demand slots are immediately readable. `approved_booking_count`
      is the number of approved-like bookings starting in that slot.
 */
-DECLARE @SemStart DATETIME2 = '2026-03-02T08:00:00';
-DECLARE @SemEnd   DATETIME2 = '2026-06-30T18:00:00';
+DECLARE @SemStart DATETIME2 = '2025-09-01T00:00:00';
+DECLARE @SemEnd   DATETIME2 = '2026-02-01T00:00:00';
 
 WITH approved AS (
     SELECT b.start_time,
@@ -213,10 +212,11 @@ GO
      * Capacity is an exact-fit rule: capacity >= requested minimum.
 
    TEST EXECUTION EXAMPLE
-     The batch below searches for spaces of capacity >= 20 that are free
-     2026-03-02 09:00..12:00 and have facilities catalog 1 (Projector) and
-     5 (Air Conditioning). Remove the INSERT (leave the table variable empty)
-     to test the empty-facility-list case.
+     The batch below searches for spaces of capacity >= 170 that are free
+     2024-06-04 11:00..12:00 and have Projector plus Air Conditioner Unit.
+     Their catalog IDs are resolved by name because identity values are data,
+     not stable business identifiers. Remove the INSERT (leave the table
+     variable empty) to test the empty-facility-list case.
 
    EXPECTED-RESULT EXPLANATION
      Only spaces satisfying every one of the five conditions are returned,
@@ -227,12 +227,27 @@ GO
      or multiple overlapping bookings, because the anti-semi-joins only test
      for EXISTENCE.
 */
-DECLARE @ReqStart    DATETIME2 = '2026-03-02T09:00:00';
-DECLARE @ReqEnd      DATETIME2 = '2026-03-02T12:00:00';
-DECLARE @MinCapacity INT       = 20;
+DECLARE @ReqStart    DATETIME2 = '2024-06-04T11:00:00';
+DECLARE @ReqEnd      DATETIME2 = '2024-06-04T12:00:00';
+DECLARE @MinCapacity INT       = 170;
 
 DECLARE @RequiredFacilities TABLE (catalog_id INT NOT NULL PRIMARY KEY);
-INSERT INTO @RequiredFacilities (catalog_id) VALUES (1), (5);  -- Projector, Air Conditioning
+DECLARE @ProjectorCatalogID INT = (
+    SELECT MIN(catalog_id)
+    FROM dbo.facility_catalog
+    WHERE facility_name = N'Projector'
+);
+DECLARE @AirConditionerCatalogID INT = (
+    SELECT MIN(catalog_id)
+    FROM dbo.facility_catalog
+    WHERE facility_name = N'Air Conditioner Unit'
+);
+
+IF @ProjectorCatalogID IS NULL OR @AirConditionerCatalogID IS NULL
+    THROW 51060, 'Room Finder setup failed: required facility catalog rows are missing.', 1;
+
+INSERT INTO @RequiredFacilities (catalog_id)
+VALUES (@ProjectorCatalogID), (@AirConditionerCatalogID);
 
 SELECT DISTINCT s.space_id,
                 s.space_code,
@@ -314,10 +329,10 @@ GO
        maintenance period, not by the booking status history.
 
    TEST EXECUTION EXAMPLE
-     The batch below picks an out-of-service maintenance record that overlaps
-     at least one approved-like booking (so the example returns rows) and lists
-     its affected bookings. Replace the variable with any concrete
-     maintenance_id to test a specific record.
+     The batch below creates an advisory maintenance record around a real
+     generated approved booking, escalates it through the production procedure,
+     lists the affected booking, then rolls the demo transaction back. The
+     database is therefore unchanged after the example.
 
    EXPECTED-RESULT EXPLANATION
      Every returned booking is (a) on the same space as the maintenance record,
@@ -327,20 +342,38 @@ GO
      A booking on a DIFFERENT space, or one that only touches the maintenance
      window at a boundary, is not returned.
 */
-DECLARE @MaintenanceID INT = (
-    SELECT TOP 1 m.maintenance_id
-    FROM dbo.maintenance_records AS m
-    WHERE m.impact_level = 'out-of-service'
-      AND EXISTS (
-          SELECT 1
-          FROM dbo.bookings AS b
-          WHERE b.space_id = m.space_id
-            AND b.status IN ('Approved', 'Checked In', 'Completed')
-            AND b.start_time < COALESCE(m.completion_time, DATEADD(YEAR, 100, m.start_time))
-            AND b.end_time   > m.start_time
-      )
-    ORDER BY m.maintenance_id
-);
+DECLARE @MaintenanceID INT;
+DECLARE @DemoSpaceID INT;
+DECLARE @ReporterID INT;
+DECLARE @DemoStart DATETIME2;
+DECLARE @DemoEnd DATETIME2;
+
+SELECT TOP (1)
+       @DemoSpaceID=b.space_id,
+       @ReporterID=b.user_id,
+       @DemoStart=DATEADD(MINUTE,15,b.start_time),
+       @DemoEnd=DATEADD(MINUTE,-15,b.end_time)
+FROM dbo.bookings AS b
+JOIN dbo.spaces AS s ON s.space_id=b.space_id
+WHERE s.space_code LIKE N'GEN-%'
+  AND b.status IN ('Approved','Checked In','Completed')
+ORDER BY b.booking_id;
+
+IF @DemoSpaceID IS NULL
+    THROW 51061,'Affected-booking demo requires at least one generated approved-like booking.',1;
+
+BEGIN TRY
+    BEGIN TRAN;
+
+    INSERT dbo.maintenance_records
+        (space_id,reporter_id,assigned_staff_id,problem_description,
+         start_time,completion_time,status,result_note,impact_level)
+    VALUES
+        (@DemoSpaceID,@ReporterID,NULL,N'Transaction-scoped escalation demo',
+         @DemoStart,@DemoEnd,N'Open',NULL,N'advisory');
+
+    SET @MaintenanceID=SCOPE_IDENTITY();
+    EXEC dbo.sp_set_maintenance_impact @MaintenanceID,N'out-of-service';
 
 SELECT b.booking_id,
        b.space_id,
@@ -363,6 +396,13 @@ WHERE m.maintenance_id = @MaintenanceID
   AND b.start_time < COALESCE(m.completion_time, DATEADD(YEAR, 100, m.start_time))
   AND b.end_time   > m.start_time
 ORDER BY b.start_time;
+
+    ROLLBACK TRAN;
+END TRY
+BEGIN CATCH
+    IF XACT_STATE()<>0 ROLLBACK TRAN;
+    THROW;
+END CATCH;
 GO
 
 -- ============================================================================

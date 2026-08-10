@@ -5,13 +5,16 @@
    RUN     : sqlcmd -S localhost -E -C -d CampusSpaceManagement -i summary.sql
    ============================================================================ */
 
+USE [CampusSpaceManagement];
+GO
+
 SET NOCOUNT ON;
 
 PRINT N'================ DATASET SUMMARY (Campus Space Management, G11) ================';
 
 /* --- 1. Record counts ----------------------------------------------------- */
 SELECT 'users' AS table_name, COUNT(*) AS total,
-       SUM(CASE WHEN u.email LIKE '%@gen.school.edu' THEN 1 ELSE 0 END) AS generated
+       SUM(CASE WHEN u.email LIKE '%@g11.generator.local' THEN 1 ELSE 0 END) AS generated
   FROM dbo.users u;
 SELECT 'spaces' AS table_name, COUNT(*) AS total,
        SUM(CASE WHEN s.space_code LIKE 'GEN-%' THEN 1 ELSE 0 END) AS generated
@@ -61,7 +64,7 @@ SELECT 'advisory_acknowledgements' AS table_name, COUNT(*) AS total,
 
 /* --- 2. Users: role distribution ------------------------------------------ */
 SELECT role, COUNT(*) AS n
-  FROM dbo.users WHERE email LIKE '%@gen.school.edu'
+  FROM dbo.users WHERE email LIKE '%@g11.generator.local'
  GROUP BY role ORDER BY n DESC;
 
 /* --- 3. Spaces: type / status / auto-booking ------------------------------ */
