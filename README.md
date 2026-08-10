@@ -167,7 +167,7 @@ opencode
 ### Phase 1 - Generate database design artifacts (Steps 01–07)
 
 ```text
-run phase 1 pipeline
+/design-db req/business-requirement.md
 ```
 
 ### Phase 2 - Extend with migration, concurrency, tuning, and analytics (Steps 08–16)
@@ -175,7 +175,7 @@ run phase 1 pipeline
 > **Prerequisite:** All 7 Phase 1 output files must already exist in `outputs/`.
 
 ```text
-run phase 2 pipeline
+/run-phase2 req/business-requirement.md
 ```
 
 ### Evaluation - Evaluate Phase 1 outputs against the rubric
