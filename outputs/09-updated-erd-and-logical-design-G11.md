@@ -91,7 +91,6 @@ erDiagram
         string department
         string account_status
     }
-
     SPACE {
         string space_id PK
         string space_code
@@ -101,79 +100,92 @@ erDiagram
         string floor
         string room_number
         integer capacity
-        string current_status
+        string current_status "Available|In Use|Temporarily Closed|Retired"
         string usage_policy
-        boolean auto_booking_enabled
+        boolean auto_booking_enabled "NEW"
     }
-
     FACILITY_CATALOG {
         string catalog_id PK
         string facility_name
         boolean is_trackable
     }
-
     SPACE_FACILITY {
-        string space_facility_id PK
+        string space_facility_id PK "NEW"
+        string space_id FK
+        string catalog_id FK
         integer quantity
     }
-
     FACILITY_ASSET {
         string asset_id PK
+        string space_facility_id FK "NEW"
         string asset_tag
         string status
     }
-
     BOOKING {
         string booking_id PK
+        string user_id FK
+        string space_id FK
+        datetime start_time
+        datetime end_time
         string purpose
         integer expected_participants
         string status
-        boolean advisory_acknowledged
-        string advisory_snapshot
+        boolean advisory_acknowledged "NEW"
+        string advisory_snapshot "NEW"
     }
-
     APPROVAL {
         string approval_id PK
-        string staff_id
+        string booking_id FK
+        string staff_id FK "NULLABLE - NEW"
         datetime decision_time
         string decision_note
         string rejection_reason
     }
-
     USAGE_SESSION {
         string session_id PK
+        string booking_id FK
+        string staff_id FK
         datetime actual_start_time
         datetime actual_end_time
         string initial_condition
         string final_condition
         string usage_notes
     }
-
     MAINTENANCE_RECORD {
         string maintenance_id PK
+        string space_id FK
+        string reporter_id FK
+        string assigned_staff_id FK
         string problem_description
         datetime start_time
         datetime completion_time
         string status
         string result_note
-        string impact_level
+        string impact_level "advisory|out-of-service NEW"
     }
-
     INCIDENT_REPORT {
         string report_id PK
+        string user_id FK
+        string space_id FK
+        string space_facility_id FK "NULLABLE NEW"
+        string asset_id FK "NULLABLE NEW"
         string description
         datetime reported_at
-        string status
+        string status "NEW"
     }
-
     REPORT_CONSOLIDATION {
         string consolidation_id PK
-        datetime consolidated_at
+        string incident_report_id FK
+        string maintenance_id FK "NULLABLE"
+        string consolidated_by FK
+        datetime consolidated_at "NEW"
     }
-
     ADVISORY_ACKNOWLEDGEMENT {
         string acknowledgement_id PK
-        datetime acknowledged_at
+        string booking_id FK
+        string maintenance_id FK
+        string acknowledged_by FK
+        datetime acknowledged_at "NEW"
     }
 ```
 
