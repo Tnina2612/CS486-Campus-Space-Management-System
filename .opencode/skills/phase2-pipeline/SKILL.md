@@ -32,9 +32,10 @@ These additions are mandatory and must be implemented and validated during the p
    - Add a new entity/table `INCIDENT_REPORT` for normal users to submit issue reports.
    - Ensure duplicate incident reports can be consolidated (many reports mapped to one `MAINTENANCE_RECORD`).
    - `impact_level` decision authority must remain on `MAINTENANCE_RECORD` (manager/staff triage), not on end-user reports.
+   - `MAINTENANCE_RECORD.impact_level` must default to `'advisory'` unless triage explicitly sets another value.
    - Booking checks must read only `MAINTENANCE_RECORD` and ignore unresolved/duplicate `INCIDENT_REPORT` rows for blocking decisions.
 3. **SPACE auto-booking flag**
-   - Add `SPACE.AutoBookingEnabled` as `BIT NOT NULL`.
+   - Add `SPACE.auto_booking_enabled` as `BIT NOT NULL`.
    - Set a safe default of `0` (auto-booking disabled by default for existing/new spaces unless explicitly enabled).
 4. **APPROVAL nullable staff assignment for automatic approvals**
    - Alter `APPROVAL.staff_id` so that it is nullable (`NULL`); it must no longer be defined as `NOT NULL`.
@@ -44,14 +45,20 @@ These additions are mandatory and must be implemented and validated during the p
    - Manual/staff-approved requests must continue to record the approving staff member in `APPROVAL.staff_id`.
 5. **Automatic approval stored procedure**
    - Create a stored procedure named `sp_AutoApproveBookingRequest` that evaluates a booking request against applicable space usage policy constraints.
-   - Approve only when all policy checks pass and the target space has `SPACE.AutoBookingEnabled = 1`.
+   - Approve only when all policy checks pass and the target space has `SPACE.auto_booking_enabled = 1`.
    - When the procedure automatically creates or updates the corresponding `APPROVAL` record, it must set `APPROVAL.staff_id = NULL`.
    - If checks fail (including auto-booking disabled), do not auto-approve and return/raise a clear status/error.
    - Validate that the procedure works correctly with the updated nullable `APPROVAL.staff_id` schema.
-
+6. **Facility-instance report target normalization**
+   - Normalize the reporting target model so incident reports can describe a room, a facility type inside that room, or a specific tracked asset.
+   - Introduce a surrogate `SPACE_FACILITY.space_facility_id` key, re-point `FACILITY_ASSET` to that key, and add nullable `INCIDENT_REPORT.space_facility_id` and `INCIDENT_REPORT.asset_id` columns.
+   - Enforce the business rule that `asset_id` requires a non-null `space_facility_id`, and the asset must belong to the selected facility instance.
+ 
 ## Workflow Execution Steps
 
 The agent must execute the following steps in exact order. Do not proceed to the next step until the current step's output has been successfully generated and verified.
+
+* **Supplementary Skill:** If the requirement set includes facility-instance report target normalization, the agent must also consult the dedicated `facility-instance-report-normalization` skill for the detailed entity, relationship, and migration rules before drafting the design or migration artifacts.
 
 ### Step 1: Requirement Analysis
 * **Trigger Skill:** `08-requirement-change-analysis`
@@ -65,7 +72,7 @@ The agent must execute the following steps in exact order. Do not proceed to the
 
 ### Step 3: Schema Migration
 * **Trigger Skill:** `10-schema-migration`
-* **Output:** Generate `outputs/10-schema-migration-G11.sql` containing safe `ALTER TABLE` commands, including adding `SPACE.AutoBookingEnabled BIT NOT NULL DEFAULT (0)`, removing `Under Maintenance` from `SPACE.current_status`, and creating incident-report structures.
+* **Output:** Generate `outputs/10-schema-migration-G11.sql` containing safe `ALTER TABLE` commands, including adding `SPACE.auto_booking_enabled BIT NOT NULL DEFAULT (0)`, removing `Under Maintenance` from `SPACE.current_status`, creating incident-report structures, and normalizing the facility-instance reporting target model through `SPACE_FACILITY.space_facility_id` and `INCIDENT_REPORT` target columns.
 * **Execution:** Apply the migration SQL in terminal, then run validation queries to confirm the status domain update, incident schema, nullable `APPROVAL.staff_id`, and default constraints are present.
 
 ### Step 4: Concurrency Strategy
@@ -75,12 +82,12 @@ The agent must execute the following steps in exact order. Do not proceed to the
 ### Step 5: Concurrency Implementation
 * **Trigger Skill:** `12-concurrency-implementation`
 * **Output:** Generate `outputs/12-concurrency-implementation-G11.sql` with the transaction wrappers/functions, including `sp_AutoApproveBookingRequest`.
-* **Execution:** Execute the SQL file in terminal and verify procedures enforce both policy checks and `SPACE.AutoBookingEnabled`, while booking-block checks rely only on `MAINTENANCE_RECORD impact_level = 'out-of-service'`.
+* **Execution:** Execute the SQL file in terminal and verify procedures enforce both policy checks and `SPACE.auto_booking_enabled`, while booking-block checks rely only on `MAINTENANCE_RECORD impact_level = 'out-of-service'`.
 
 ### Step 6: Concurrency Testing
 * **Trigger Skill:** `13-concurrency-tests`
-* **Output:** Populate the `outputs/13-concurrency-tests-G11/` directory with SQL transaction files, a Python test script (`test_concurrency.py`), and a `README.md`.
-* **Execution:** Run the test SQL/Python scripts in terminal and confirm: auto-approval behavior is correct for both enabled/disabled auto-booking spaces, advisory maintenance does not block, and out-of-service maintenance blocks overlapping bookings.
+* **Output:** Populate the `outputs/13-concurrency-tests-G11/` directory with SQL transaction files (including both two concurrent instant-booking scripts and a staff-approval overlap script), a Python test script (`test_concurrency.py`), and a `README.md`.
+* **Execution:** Run the test SQL/Python scripts in terminal and confirm: two simultaneous instant bookings for overlapping windows do not both succeed, instant-booking vs. staff-approval overlap contention is safely handled, auto-approval behavior is correct for both enabled/disabled auto-booking spaces, advisory maintenance does not block, and out-of-service maintenance blocks overlapping bookings.
 
 ### Step 7: Large-Scale Data Generation
 * **Trigger Skill:** `14-data-generator`

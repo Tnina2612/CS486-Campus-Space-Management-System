@@ -18,7 +18,9 @@ Analyze the Phase 2 requirement changes, translate them into a structured list o
    - Any knock-on effect on other entities or rules.
    - Mandatory coverage:
      - `SPACE.current_status` no longer carries `Under Maintenance`; maintenance blocking is delegated to `MAINTENANCE_RECORD` overlap where `impact_level = 'out-of-service'`.
-     - End users submit `INCIDENT_REPORT`; manager/staff triage consolidates duplicate reports into one `MAINTENANCE_RECORD` and decides `impact_level`.
+     - End users submit `INCIDENT_REPORT`; manager/staff triage consolidates duplicate reports into one `MAINTENANCE_RECORD` and decides `impact_level`, with `MAINTENANCE_RECORD.impact_level` defaulting to `'advisory'` unless explicitly escalated.
+     - The reporting target must be normalized through a dedicated facility-instance layer so an incident can target a room, a facility type inside that room, or a specific tracked asset.
+     - `SPACE_FACILITY` must evolve to a surrogate-key entity with `space_facility_id`, `FACILITY_ASSET` must reference that entity, and `INCIDENT_REPORT` must carry nullable `space_facility_id` and `asset_id` with the business rule that `asset_id` requires a non-null `space_facility_id` and a matching asset-to-facility relationship.
 3. **Business Rule Impact**: For every affected business rule from Phase 1, state clearly whether it is:
    - **Kept unchanged**, or
    - **Refined** (its condition changes), and describe the new condition, or
