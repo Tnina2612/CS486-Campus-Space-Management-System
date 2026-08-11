@@ -1322,6 +1322,116 @@ Booking/Room Finder code hiện không filter maintenance `status`; nó định 
 
 # 19. Bốn analytical queries — file 16
 
+## 19.1 Nhiệm vụ tổng thể của `16-analytical-queries-G11.sql`
+
+File 16 là **reporting/query layer của Phase 2**. Nhiệm vụ của nó không phải tạo schema, sinh dữ liệu, xử lý transaction hay tạo index, mà là chuyển bốn câu hỏi nghiệp vụ bắt buộc trong mục `1.3. New reporting needs` của `CS486_Project_Phase02.md` thành bốn truy vấn SQL Server có thể chạy và kiểm tra được.
+
+Vị trí của file 16 trong toàn pipeline:
+
+```text
+05 + 10: tạo và migrate schema
+        ↓
+12: bảo vệ các thao tác ghi bằng transaction/locking
+        ↓
+14: tạo dữ liệu lịch sử đủ lớn
+        ↓
+15: chứng minh indexes giảm chi phí truy vấn
+        ↓
+16: sử dụng dữ liệu/schema/index để trả lời bốn câu hỏi báo cáo
+```
+
+Nói ngắn gọn với giảng viên:
+
+> “File 16 là phần triển khai trực tiếp bốn báo cáo bắt buộc của Phase 2. Mỗi query nhận đúng input nghiệp vụ, dùng schema đã migrate để lọc/aggregate dữ liệu, và trả result set cho Facility Manager hoặc requester. File 15 đo hiệu năng của các workload; file 16 mới là nơi trình bày đầy đủ business reports.”
+
+## 19.2 Ánh xạ trực tiếp yêu cầu 1.3 → code file 16
+
+| Yêu cầu nguyên bản trong mục 1.3 | Phần giải quyết trong file 16 | Tables chính | Output nghiệp vụ |
+|---|---|---|---|
+| Total approved booking hours of each space for a given semester | Query 1 — Approved booking hours by space | `spaces`, `bookings` | Mỗi room một dòng: số booking và tổng giờ approved-like trong semester. |
+| Number of approved bookings by weekday and hour for a given semester | Query 2 — Approved bookings by weekday/hour | `bookings` | Số booking theo từng cặp thứ trong tuần–giờ bắt đầu. |
+| Available spaces satisfying capacity and required facilities in a time period | Query 3 — Room Finder | `spaces`, `space_facility`, `bookings`, `maintenance_records`, `facility_catalog` | Danh sách rooms đủ capacity, có tất cả facilities và không bị booking/OOS conflict. |
+| Approved bookings affected when maintenance is escalated to out-of-service | Query 4 — Affected bookings after escalation | `maintenance_records`, `bookings`, `users`, `spaces` | Booking bị ảnh hưởng cùng thông tin liên hệ requester. |
+
+Đây là traceability quan trọng nhất: bốn bullet trong requirement tương ứng **một-một** với bốn query. Không nên giải thích theo nhãn RC-07..RC-10 trong header vì numbering đó không đồng nhất với file 08; hãy đối chiếu theo chính wording của business question.
+
+## 19.3 File 16 giải quyết requirement như thế nào?
+
+### Requirement 1 — tổng giờ approved booking của mỗi room
+
+Query 1 không chỉ `SUM` booking đang có. Nó LEFT JOIN từ `spaces`, nên ngay cả room không có booking trong semester cũng xuất hiện với `0` booking và `0` giờ. `COUNT` trả số lần sử dụng; `SUM(DATEDIFF(MINUTE,...))/60.0` trả tổng giờ. Như vậy Facility Manager vừa thấy room dùng nhiều, vừa nhận diện room không được sử dụng.
+
+### Requirement 2 — số booking theo weekday và hour
+
+Query 2 lọc semester trước, sau đó group theo weekday/hour của `start_time`. Công thức kết hợp `@@DATEFIRST` làm Monday=1..Sunday=7 ổn định trên các SQL Server có language setting khác nhau. Kết quả hỗ trợ nhận diện peak demand, ví dụ giờ nào trong thứ Hai cần nhiều phòng/nhân viên nhất.
+
+### Requirement 3 — tìm room thực sự khả dụng
+
+Query 3 giải requirement thành năm điều kiện đồng thời:
+
+1. Room không Closed/Retired.
+2. `capacity >= @MinCapacity`.
+3. Có **tất cả** required facilities bằng double `NOT EXISTS`.
+4. Không có approved-like booking overlap.
+5. Không có out-of-service maintenance overlap; advisory không block.
+
+Do đó “available” không chỉ là `spaces.current_status='Available'`; nó là kết quả tổng hợp của capacity, facility inventory, booking calendar và maintenance calendar tại requested window.
+
+### Requirement 4 — tìm booking bị ảnh hưởng bởi escalation
+
+Query 4 lấy maintenance đã được nâng thành OOS, tìm booking cùng `space_id` và overlap maintenance interval, sau đó join `users` để trả name/email/phone/department. Đây là đúng mục đích “identify so staff can contact requesters”; code không tự cancel booking.
+
+Phần demo trong file tạo maintenance tạm quanh một generated booking, gọi `sp_set_maintenance_impact`, hiển thị contact list rồi rollback. Vì vậy giáo viên nhìn thấy một result có ý nghĩa nhưng database không lưu record minh họa.
+
+## 19.4 Quy ước chung của bốn query
+
+- “Approved booking” trong report được implementation hiểu là lifecycle statuses `Approved`, `Checked In`, `Completed`. Checked-in/completed vẫn xuất phát từ một approval và thể hiện occupancy/history thực tế.
+- Time windows dùng half-open boundaries: start được include, end bị exclude.
+- Overlap luôn dùng `existing_start < requested_end AND existing_end > requested_start`, nên hai intervals chỉ chạm biên không conflict.
+- Mỗi query là batch độc lập, ngăn bằng `GO` và tự khai báo variables; Query 2 không phụ thuộc variables của Query 1.
+- Predicates được viết SARGable để dùng các indexes ở file 10/15; `DATEPART` chỉ dùng sau time filter.
+- Cuối file có V1–V8 để minh họa edge cases, nhưng chúng là semantic examples, không phải benchmark Before/After.
+
+## 19.5 Cách diễn giải file 16 cho giảng viên
+
+Có thể trình bày theo trình tự sau:
+
+1. **Mở mục 1.3 của đề:** chỉ vào bốn reporting bullets.
+2. **Mở phần đầu file 16:** cho thấy file được chia thành Query 1–4, mỗi query trả lời đúng một bullet.
+3. **Giải thích input → logic → output**, không đọc từng dòng SQL:
+   - Query 1: semester → aggregate utilization per room.
+   - Query 2: semester → aggregate demand per weekday/hour.
+   - Query 3: capacity/facility/time → available room list.
+   - Query 4: maintenance ID → affected requester contact list.
+4. **Chỉ ra business rules dùng lại:** approved-like statuses, half-open interval, advisory không block, OOS block.
+5. **Liên hệ file 15:** Query 1–3 sử dụng các indexes đã benchmark; business result giữ nguyên nhưng logical reads thấp hơn.
+6. **Chạy file và giải thích result grids:** không chỉ nói “query chạy thành công”, mà nói mỗi cột giúp actor ra quyết định gì.
+
+### Lời giải thích mẫu khoảng một phút
+
+> “Mục 1.3 yêu cầu bốn reports, và file 16 triển khai đủ bốn theo đúng thứ tự. Query 1 tính số booking và tổng giờ sử dụng của từng room trong semester, kể cả room có số liệu bằng 0. Query 2 group approved booking starts theo weekday và hour để tìm giờ cao điểm. Query 3 là Room Finder: room phải đủ capacity, có tất cả facilities được yêu cầu, không chồng approved booking và không chồng out-of-service maintenance; advisory vẫn cho phép sử dụng. Query 4 phục vụ escalation, trả các approved bookings bị ảnh hưởng cùng contact của requester để staff xử lý, chứ không tự động cancel. Các query dùng cùng overlap/status semantics với concurrency procedures và các indexes đã được kiểm chứng ở file 15.”
+
+## 19.6 Cách demo file 16 và kết quả nên chỉ ra
+
+Chạy file sau khi đã chạy 05, 06, 10, 12 và generator 14. Nếu muốn trình bày liên hệ indexing, chạy sau task 15 để tuned indexes đang tồn tại.
+
+| Query | Demo parameters hiện tại | Điều cần chỉ cho giảng viên |
+|---|---|---|
+| Q1 | 2025-09-01 → 2026-02-01 | 408 rooms vẫn xuất hiện; window có 12.000 approved-like bookings và 240 rooms có usage. |
+| Q2 | Cùng semester Q1 | 35 weekday/hour groups; kết quả được sort Monday→Sunday, rồi hour. |
+| Q3 | Capacity 170, Projector + AC, 2024-06-04 11:00–12:00 | Trả 44 rooms; mỗi room đã pass đủ năm conditions. |
+| Q4 | Tự chọn một generated booking và tạo escalation tạm | Hiện booking/contact bị ảnh hưởng; sau batch có 0 maintenance demo còn lại vì rollback. |
+
+Window Q1/Q2 của file 16 là một học kỳ có dữ liệu để result dễ đọc. Benchmark file 15 cố ý dùng window rộng 2023-01-01 → 2026-02-01 để tạo workload nặng; hai bộ parameters có mục tiêu khác nhau và không phải mâu thuẫn.
+
+## 19.7 Tiêu chí chứng minh file 16 hoàn thành nhiệm vụ
+
+- Có đủ bốn result-producing queries tương ứng bốn reporting bullets.
+- Query outputs chứa đúng dimension/measure cần ra quyết định.
+- Boundary, status, facility-ALL, advisory/OOS semantics được thể hiện rõ.
+- Query 4 trả contact list nhưng không làm thay đổi database sau demo.
+- File chạy hoàn chỉnh với SQL Server exit code 0; lần kiểm tra hiện tại có 0 SQL errors và 0 temporary escalation rows còn lại.
+
 ## Query 1 — Approved booking hours của mỗi space
 
 ### Purpose
